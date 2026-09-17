@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>具身智能这三年，到底变了什么？</title>
+</head>
+<body style="font-family:-apple-system,'PingFang SC','Heiti SC',sans-serif;color:#14161a;max-width:720px;margin:0 auto;padding:24px;">
+<h1 style="font-size:22px;font-weight:600;line-height:1.4;margin:0 0 16px;">具身智能这三年，到底变了什么？——从 Robot Learning 到 VLA，再到数据、评测与 World Model</h1>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">如果你只看模型名字，过去三年的具身智能像是一次换代：RT-1、RT-2、OpenVLA、Octo、π0、GR00T N1、Gemini Robotics。名字越来越长，参数越来越多，demo 越来越好看。但把这些工作放在同一条时间轴上，会发现一个不太上镜的事实——<strong>相当一部分变化发生在模型结构之外：训练数据怎么组织、动作怎么表示、以及怎么判断一个策略算不算变强了。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">2024 到 2026 这三年，本文在文献里观察到三个反复出现、且可以用具体工作落实的变化线索。训练侧的重心移向数据分布与后训练配方，执行侧的讨论围绕动作表示与推理时延展开，评测侧则转向协议与有效性。这三条线索互相咬合，也互相限制。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">这篇文章不复述模型，也不做公司盘点。它想回答一个更窄的问题：<strong>这三年，具身智能的讨论重心移动到了哪里；哪些移动有可核验的证据，哪些目前还只是观察？</strong> 我们会先划出三个阶段，再逐个拆开这三条线索，最后单独立出 World Model 与人形这两条并行支线——它们经常被强行塞进同一个因果链里，但那并不成立。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:28px 0 12px;">一、先划三个阶段</h2>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>划分阶段的依据不是模型名字，而是泛化从哪里来。</strong> 为了压缩这条技术线，本文采用一个基于泛化来源的观察性分期；它不是领域通行的历史分期。</p>
+<table style="border-collapse:collapse;width:100%;font-size:14px;margin:0 0 16px;">
+<thead>
+<tr>
+<th style="border:1px solid #e2e6ea;padding:6px 8px;background:#f7f8f9;text-align:left;">阶段</th>
+<th style="border:1px solid #e2e6ea;padding:6px 8px;background:#f7f8f9;text-align:left;">时间</th>
+<th style="border:1px solid #e2e6ea;padding:6px 8px;background:#f7f8f9;text-align:left;">主导范式</th>
+<th style="border:1px solid #e2e6ea;padding:6px 8px;background:#f7f8f9;text-align:left;">泛化的来源</th>
+<th style="border:1px solid #e2e6ea;padding:6px 8px;background:#f7f8f9;text-align:left;">代表工作</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">一</td>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">2017–2022</td>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">task-specific policy</td>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">人工工程与任务内数据</td>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">行为克隆、RL、轨迹优化</td>
+</tr>
+<tr>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">二</td>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">2022–2024</td>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">generalist policy</td>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">数据规模与跨本体混合</td>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">RT-1、RT-2、Open X-Embodiment、DROID</td>
+</tr>
+<tr>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">三</td>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">2024–2026</td>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">embodied foundation model</td>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">预训练 + 后训练 + 系统级工程</td>
+<td style="border:1px solid #e2e6ea;padding:6px 8px;">π0 / π0.5、GR00T N1、Gemini Robotics、开源 VLA 生态</td>
+</tr>
+</tbody>
+</table>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">阶段三和阶段二的分界不在模型名字。<strong>本文用这五项作为观察框架</strong>：数据引擎、动作表示、推理时延、真机评测、硬件成本。这些因素共同决定论文中的性能数字能否转化为部署能力。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><img alt="具身智能的三个阶段：泛化从哪里来" src="https://qingkeai.online/upload/fig1_three_phases.png" / style="max-width:100%;height:auto;display:block;margin:0 auto;"></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><em>图 1：三个阶段的划分依据是泛化从哪里来，而不是模型名字。每一栏最下方那句是本阶段暴露出的主要限制，同时也是下一阶段要解决的问题。</em></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:28px 0 12px;">二、阶段一：每个任务一个策略</h2>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">这一阶段的特征很好概括：<strong>策略是为任务定制的，泛化靠人工。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">一个抓取任务配一套示教数据，一个放置任务再配一套。换一个物体、换一个桌面、换一个光照条件，往往就要重新采数据、重新调参。轨迹优化与强化学习在这个阶段贡献了大量控制层面的方法，但它们的产出不是「一个能迁移的策略」，而是「一个在特定设置下能跑通的系统」。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">这一阶段留下的资产是评测习惯：任务内成功率、固定初始条件、单实验室验证。这些习惯在后面会变成负担，因为它默认了「策略与任务一一对应」这个前提，而这个前提恰恰是阶段二要打破的。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:28px 0 12px;">三、阶段二：数据规模开始成为主变量</h2>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>阶段二的重要变化之一，是开始有证据表明机器人学习也存在规模收益。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">2022 年 12 月的 RT-1 把动作离散成 token，让机器人控制可以复用序列建模那一套工具——数据可以堆、模型可以并行、任务可以通过语言条件切换。半年后的 RT-2 走出了一步关键变化：把机器人动作当作文本 token，直接由大型视觉语言模型输出。<strong>这一步的一个重要意义，是让互联网预训练得到的视觉语言知识能够直接参与动作生成。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">支撑这条路线的是数据。2023 年 10 月的 Open X-Embodiment 汇集了 22 种机器人本体、21 家机构的合作数据，覆盖 527 项技能、160266 个任务，并且把「统一数据格式」与数据集本身并列为贡献。这也暴露出一个现实障碍：<strong>不同机器人数据在表示与格式上的不一致，会直接限制跨本体训练。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">2024 年 3 月的 DROID 把这条路推到真实环境：76k 条演示轨迹、约 350 小时交互数据，覆盖 564 个场景与 84 项任务，由 50 名采集者在北美、亚洲、欧洲历时 12 个月采集。它在采集规范上的做法是<strong>使不同采集过程具有更一致的采集与标注规范，从而提高跨数据使用的一致性</strong>——同一套硬件、同一套流程、同一套标注，是为了减少跨批次使用时的差异，而不是让数据天然可比。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">阶段二留下的结论是：在所引实验中，数据规模与任务、物体层面的泛化表现呈正相关（单任务或窄任务分布、固定的评测协议）。<strong>这是对所引工作的概括，不是对整个阶段所有机器人学习工作的统一结论。</strong> 而且它的范围有限——这套泛化的粒度是「任务与物体」，但当任务要求进一步扩展到长程规划、复杂接触或新本体时，仅增加数据规模是否足够，现有证据还不能给出统一答案。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:28px 0 12px;">四、阶段三：从通用策略到具身基础模型</h2>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>这一阶段的一个共同变化，是训练流程越来越表现为「预训练 + 后训练」两段式。模型规模与计算量仍然重要，下面几个工作的差异，除模型结构外，也越来越体现在流程与数据组织上。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">先看两条开放模型基线。OpenVLA 是 7B 参数的 VLA，用 Llama 2 作为语言模型，视觉编码器融合了 DINOv2 与 SigLIP 的预训练特征，训练数据是 970k 条真机演示。它顺带把「如何高效微调到新任务」抬到了与预训练同等重要的位置——这是可采纳性问题，不是性能问题。Octo 走的是通用策略路线，在 Open X-Embodiment 的 800k 条轨迹上训练，强调能处理异构传感器与动作空间，并且能在消费级 GPU 上几小时完成微调。它的定位很明确：<strong>不是取代专用策略，而是作为微调起点。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">另一条代表性路线是 π0。它的 VLM 主干权重初始化为 PaliGemma，动作由独立的 action expert 通过 flow matching 生成，用的是 action chunking 架构。数据上，它的预训练混合数据包含约 10000 小时自采灵巧操作数据，来自 7 种机器人配置、68 项任务，另加 OXE、DROID 与 Bridge 等公开数据。需要强调：<strong>这 10000 小时是自采部分，不等于总混合数据量</strong>，混在一起谈会高估规模。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">NVIDIA 的 GR00T N1 则把工程代价摊开写了。它采用双系统结构：System 2 是视觉语言模块，负责理解环境与指令；System 1 是扩散 Transformer，负责实时生成动作，两个模块联合端到端训练。数据组织上，它提出「数据金字塔」这一训练语料的设计——网络数据与人类视频在底层，合成数据居中，真机数据在顶层。<strong>这是论文给出的设计选择，不是已被证明的最优方案。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">具体数字是：88 小时自采遥操作数据，经视频生成模型扩增到 827 小时，约放大 10 倍。代价也写出来了：生成这 827 小时视频约消耗 105k L40 GPU 小时，在 3600 张 L40 上跑了约 1.5 天，单秒视频生成约 2 分钟。<strong>把合成数据的 GPU 账单写进论文，是这一阶段比较少见但重要的透明度。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">Gemini Robotics 走的是另一条路：模型建立在 Gemini 2.0 之上，做的是可直接控制机器人的 VLA，并强调通过额外微调专门化到长程、高灵巧任务；报告把「数字领域的通用能力如何迁移到物理智能体」定义为尚未解决的核心挑战。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><img alt="GR00T N1 的数据金字塔与合成数据成本" src="https://qingkeai.online/upload/fig2_data_pyramid.png" / style="max-width:100%;height:auto;display:block;margin:0 auto;"></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><em>图 2：数据金字塔是论文提出的语料设计，不是已被证明的最优方案。读法是越往下数据越多、越往上越接近真实执行；右侧把扩增倍数与算力账单并列，是为了说明合成数据不是免费的数据。</em></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">国内这条线上，AgiBot World Colosseo 把数据平台、数据集、模型与评测成套发布：100 万条以上轨迹、217 项任务、5 个部署场景。配套的策略 GO-1 使用 latent action 表示来提高数据利用率。论文报告了三个不同口径的结果，需要分开读：相对在 Open X-Embodiment 上训练的策略平均提升 30%（覆盖域内与分布外）；在复杂任务上成功率超过 60%；相对此前的 RDT 方法高出 32%。<strong>这三者不是同一个实验指标，不能合并成一个结论。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">把这几个工作放在一起，阶段三的轮廓就出现了：<strong>在本文纳入的这些样本中，更容易观察到的差异出现在流程与数据组织上。这不意味着结构已经不重要——已有规模研究仍报告模型、数据与计算量之间的幂律关系；它也不是已经确立的行业趋势，而是一个可以被后续工作检验的观察。</strong></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:28px 0 12px;">五、变化一：从数据量转向数据分布</h2>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>「多采数据」和「采对数据」是两件事。一个重要变化，是开始把两者分开讨论。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">最直接的证据来自一项受控实验：研究者采集 40000 条以上演示、执行 15000 次以上真机 rollout，系统测量泛化与环境数、物体数的关系。结论有两条——泛化性能与环境数、物体数之间近似幂律关系；但<strong>每个环境或物体的演示数超过某个阈值后，继续追加演示几乎没有收益</strong>。在该实验设置下，多样性变量的收益明显高于继续增加同环境、同物体演示的收益。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">这条结论需要立刻加一个限定。另一项工作从任务、本体、演示者三个维度检验了「越多样越好」这个直觉，发现任务多样性确实比单任务演示数量更关键，但<strong>多本体预训练数据对跨本体迁移并非必需</strong>——只用高质量单本体数据训练的模型也能有效迁移。也就是说，「多样性」必须分维度讨论：任务维度的多样性有效，本体维度的多样性到目前为止没有被证明是必需项。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">反向的证据也不是没有。一项覆盖约 1000 个程序化生成本体的 locomotion 实验报告了正向的 embodiment scaling，并且发现扩大本体多样性带来的泛化提升显著超过在固定本体上扩大数据量。这与上面那条「本体多样性非必需」的方向不一致——两者的差异可能来自任务域（locomotion 的动力学更可控），也可能来自实验设置。<strong>这个分歧目前没有被解决，写作时不应该站队。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">数据组织方式的变化还有一个更抽象的证据。π0.5 用异构任务的协同训练换取开放世界泛化，训练数据同时来自多个机器人、高层语义预测与网络数据；论文作者明确表示，这种知识迁移对有效泛化是必要的。GR00T N1 的数据金字塔设计、GO-1 的 latent action，都可以看作同一个方向的不同实现。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">现在说反证，因为它很重要。一项对 327 篇论文的元分析给出的是另一种图景：机器人模型性能随数据、模型与算力增加都呈幂律提升，而且机器人任务的规模增长速度快于语言任务，并随规模出现新能力。这是论文间比较而非受控实验，不能反过来证明「模型规模是主因」，但它足以否定一个更极端的说法。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>所以这一节的准确表述是：数据分布的变化解释了相当一部分性能差异，但它不等于「结构不重要」，也不等于「数据一定比模型重要」。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><img alt="多采数据，还是采对数据？" src="https://qingkeai.online/upload/fig3_data_scaling.png" / style="max-width:100%;height:auto;display:block;margin:0 auto;"></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><em>图 3：同样一份预算，投在「新环境 / 新物体」与投在「同一环境的更多演示」上，收益形状不同。曲线为定性示意，不还原原文数值；右侧两条限定是本节的证据边界。</em></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:28px 0 12px;">六、变化二：动作表示与实时执行</h2>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>动作表示是这一阶段的必答题，但把它称作胜负手缺乏证据。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">这条线上的几个节点按时间是：RT-2 把动作离散成文本 token → ACT 提出 action chunking，一次输出一段动作 → Diffusion Policy 把策略表示成条件去噪扩散过程，输出动作序列 → π0 用 flow matching 生成连续动作 → real-time-chunking 处理分块执行时的推理时延。<strong>这个排列是时间顺序，不代表后一个取代前一个；它们分别在处理不同的动作建模与执行约束。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">下面两个工作是围绕 action tokenization 与 inference efficiency 的相邻工作，不是同一条路线上的先后升级。FAST 专门处理自回归 VLA 的动作 tokenization，让模型能够输出高频、连续的动作序列；FASTer 把动作 tokenization 描述为一个显式权衡——<strong>重建保真度与推理效率之间的取舍</strong>，并用可学习 tokenizer 报告了在推理速度与任务性能上同时超过此前自回归 VLA 的结果。两者都在改动作与推理的接口，与上面那条时间轴是并行关系。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">这里必须处理一个常被引用的数字。Diffusion Policy 报告在 4 个机器人操作 benchmark 上平均改进 46.9%，原文把这个平均值定义为逐任务相对改进再取平均。引用时要注意三件事：第一，任务数在版本间不一致，arXiv abs 页与 API 的摘要写 12 个任务，v5 全文摘要写 15 个任务；第二，该文为各方法选用了各自最优的动作空间——Diffusion Policy 用位置控制，基线用速度控制，benchmark 差距里混有动作空间的影响；第三，论文自己在正文里报告，带位置控制动作空间的 Diffusion Policy 一致优于带速度控制的版本——这个反差本身就说明动作空间是独立变量。<strong>所以 46.9% 不能单独归因于「扩散表示」这件事。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">更根本的反证来自训练目标这一侧。有工作指出现有 VLA 大多沿用交叉熵（离散动作）或 MSE（连续回归）这类逐点约束目标，并提出轨迹级的最小误差熵目标来改写动作误差分布——也就是说，<strong>训练目标是与动作表示正交的另一个变量</strong>，把注意力全放在表示形式上会漏掉同量级的影响。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">还有一个方法学上的缺口需要写清楚：到今天为止，公开文献里仍然缺少「同一模型、只替换动作表示」的受控对照。这意味着我们无法把性能差异干净地归给表示形式。<strong>动作表示会影响模型能否在给定控制频率下落地，但它是否决定能力强弱，目前没有答案。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><img alt="动作表示的演进" src="https://qingkeai.online/upload/fig4_action_representation-VfKx.png" / style="max-width:100%;height:auto;display:block;margin:0 auto;"></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><em>图 4：横向是时间顺序，不代表后一个取代前一个——每个节点在解不同的工程约束；FAST / FASTer 单独放在并行轨道上，因为它们是围绕 action tokenization 与 inference efficiency 的相邻工作，而不是这条线的下一站。底部两块是本节的引用提醒与实验缺口。</em></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:28px 0 12px;">七、变化三：评测变成了系统问题</h2>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>评测正在从单一 benchmark 走向协议与有效性并重的系统问题。</strong> 这一节要说明的是这个转向本身，而不是宣布评测领域已经没有争议。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">先看一个更具体的问题：仿真评测能否在一定条件下反映真机的策略排序？SIMPLER 给出了一个条件性的正面结果：它分别处理真实与仿真之间的控制差异与视觉差异，并明确表示不需要全保真数字孪生。结果需要连条件读：在排序 6 个开源策略检查点（3 个 RT-1 检查点、RT-1-X、RT-2-X、Octo-Base）、覆盖两种机器人本体（Google Robot 与 WidowX）、约 1500 个评测回合的设置下，SIMPLER-VisMatch 的 Pearson r 平均为 0.924，VarAgg 为 0.778，而按验证 MSE 排序只有 0.308。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">但同一张表里还藏着一个容易被忽略的数字：在 Drawer 这个任务上，VarAgg 的 Pearson r 只有 0.486，VisMatch 是 0.942。<strong>同一协议内部存在明显的任务间波动，所以引用这个 0.924 时必须带上 population 与 metric，不能外推成「仿真已经替代真机」。</strong> 论文还指出 Pearson r 会惩罚排序正确但非线性对齐的评测流程，因此另外提出了 MMRV 指标——指标选择可能改变排序或相关性结论。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">真机这一侧的变化更直观：成本在被工程化地打下来。ArmnetBench 用一队低成本 SO-101 机械臂在轻量现场监督下并行评测，对比 7 个策略、12 项任务，覆盖单臂与双臂，每个策略在每项任务上统一用 50 条演示训练或微调，整批包含 2518 次策略 rollout 与 600 条参考演示，合计 3118 个回合，每个回合带成功、次优、失败三分类标签。论文自己把榜单定位为「同一预算下的初步比较」而非绝对排名，这个自我限定很重要。此外还有把它做成可调度队列的 AutoEval，以及让不同地点的参与者按统一协议评测同一批策略的 RoboArena。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">再往下是协议层，这一层在 2026 年密集起来。Beyond Binary Success 把策略比较当成统计推断问题，基于任意时间有效的推断做序贯检验，达到预设置信水平即可停止，支持的指标从二值成功率扩展到部分完成度、回合奖励与轨迹平滑度。Active Real-World Factor-Based Evaluation 则把评测变成序贯实验设计：在物体位姿、相机视角这类结构化任务因子上拟合概率代理模型，主动选择信息增益最大的配置。<strong>前者回答「跑多少回合才够」，后者回答「该跑哪些回合」。</strong> 论文同时指出，现有实践普遍使用狭窄测试集，跑满预算也可能系统性漏掉关键失败模式。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">不过协议层之上还有一层，是这三年的研究里更少被讨论、但更根本的问题：<strong>benchmark 分数是否等于它声称测量的能力。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">这类证据在 2025–2026 才集中出现。有工作用因果干预（空间布局变化、时序外推）配合运动学隔离，把高层推理失败与低层执行限制分开测量，结果是所评测的 VLA 在动态场景中严重失败，出现词法-运动学捷径、行为惯性与语义特征坍缩，论文把症状追到容量压缩与近视下采样这类架构瓶颈。有工作在六个能力域做统一评测，结论是没有任何模型表现出一致的通用性，失败形式包括模态错位、输出格式不稳定与域迁移下的灾难性知识退化。还有工作在 28 项任务、13 个任务类别、2 种机器人形态的仿真基准上明确指出：零样本感知能力的进步会掩盖任务表现的退化。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">所以评测这一层实际上可以拆成两部分：<strong>协议层解决「跑得够不够、比得公不公平」，有效性层解决「跑的东西算不算能力」。</strong> 前者已经出现了一批可复用的工程工具，后者目前还主要停留在批评阶段。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">顺着这个思路，可以把评测整理成一个五层框架（说明：这是我们基于上述文献整理的<strong>分析框架</strong>，不是领域内的既定共识）：</p>
+<pre style="background:#f7f8f9;border-radius:8px;padding:12px;font-size:13px;line-height:1.6;overflow-x:auto;margin:0 0 16px;"><code>L5 有效性层（横向）   测的东西是否等于声称的能力
+      ├── L4 协议层    seed / checkpoint / 回合预算 / 统计 / 失败分类 / 人工介入
+      ├── L3 环境层    视觉真实感、物理、扰动、开放世界
+      ├── L2 本体层    机器人形态、执行器、传感配置
+      └── L1 任务层    任务集合与长程 horizon
+</code></pre>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><img alt="评测的五层框架" src="https://qingkeai.online/upload/fig5_evaluation_framework.png" / style="max-width:100%;height:auto;display:block;margin:0 auto;"></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><em>图 5：L5 是横向层，对下面四层都构成约束；右侧箭头表示评测结果回流到上游。这是本文基于文献整理的分析框架，不是领域内的既定共识。</em></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">其中环境层有一个值得对照的细节：SIMPLER 主张控制与视觉差异可以被显式处理，而另一条工作线认为视觉真实性被系统性低估——光照与材质对几何推理与空间接地有重要影响，却普遍被既有 benchmark 忽略。<strong>两边说的其实是同一件事的两面：差距不会被自动消除，你必须决定怎么处理它。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">指标也不该被合并。安全规范可以独立于任务成功来指定，并通过形式化监视器在物理谓词上运行时检查，而不是用学习分类器——ManiGuard 用 200 个锁定基础任务、1000 个锁定场景（1 个分布内加 4 个单轴分布外扰动）给出了这种协议的写法。长时程能力同样不能由单步成功率代表：LongBench 用 1000 个以上真机回合，把任务分成完全可观测与歧义驱动两个设定，结论是长时程表现不由单一因素决定。<strong>把这些指标合成一个「能力分数」，在当前的证据水平下没有依据。</strong></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:28px 0 12px;">八、World Model 与 Humanoid：两条并行支线</h2>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>这两条线经常被塞进同一个因果链里，但它们目前的证据支持的是「并行」，不是「合并」。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">先说世界模型。<strong>在本文纳入的证据里，world model 的一个清晰应用方向是成为评测代理；与此同时，也已有工作把它放进层级策略。</strong> WorldEval 把世界模型当作真机策略的评测工具，用于给策略与 checkpoint 排序，并作为新模型上线前的危险动作检测器；WorldGym 用动作条件视频生成模型构成评测环境，在模型内做蒙特卡洛 rollout，报告世界模型内的策略成功率与真机成功率高度相关，并能保持策略的相对排序。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">这条路线的一个技术细节值得记：WorldEval 发现直接输入机器人动作或使用高维编码常常无法生成跟随动作的视频，因此改用 latent action 驱动。<strong>latent action 也在不同工作中被用作连接视觉预测与动作生成的一种中间表示。</strong></p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">本文纳入的工作中，世界模型进入策略内部主要体现为层级规划。有工作把预训练世界模型当作高层规划器、把 VLA 当作低层执行器，用世界模型合成的目标图像替代纯文本目标，报告同一结构的 VLA 在未见场景中的表现从 14% 提升到 69%。更早的一项工作直接把层级世界模型当作视觉全身人形控制器，在仿真 56 自由度人形上完成 8 项任务，并且明确不使用奖励设计或技能原语。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">反证同样具体。What-If World 用 319 对提示（构建在 nuScenes 与 DROID 的真实帧上，按六个物理变量分类）检验一件事：只改变一个物理细节时，模型输出是否按物理规律分化。它指出现有基准逐条给视频打分，结构上无法发现模型对某个物理变量不敏感——也就是说，<strong>两段各自看起来合理的视频，可能同时是错的。</strong> 在本文证据下，它更适合作为初筛工具，而不能单独承担真机验收。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">人形这条线的情况不同。目前公开工作中，人形线至少已经在 locomotion 的 sim2real 与跨形态泛化两个方向出现多项实证结果：用强化学习在仿真中训练并迁移到真实硬件行走，报告了从仿真到真实硬件的迁移结果；也有工作报告单个策略经一次训练即可泛化到多种人形设计，方法要点是形态随机化与对齐的观测、动作空间。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">人形研究的一个特点，是形态本身可以被量化并形成缩放关系。有工作为双足机器人建立了类似生物异速生长的尺度关系，覆盖三个数量级的腿长变化，报告机器人质量更接近随腿长平方缩放，而不是等距缩放预测的立方。这条结论说明：<strong>形态本身可以成为可量化、可研究的变量，而不是模糊的叙事。</strong> 同时，人形场景也确实产出了方法——双系统架构与人类动作到人形的全身遥操作接口，都来自这条线。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">所以更准确的表述是：<strong>现有材料尚不足以分离形态、数据与控制方法各自的贡献。</strong> 可以确认的是，人形线既产出了方法，也让形态本身变成了可研究的对象。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:28px 0 12px;">九、收尾：给读者的三个可检验判断</h2>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">不做展望，只留三个可以被后续工作验证或证伪的判断。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>第一，数据侧值得重点检验的是分布，而不只是总量。</strong> 如果后续出现「同一模型、不同数据配比」的受控消融，应出现可重复的边际收益差异，并检验多样性增加是否比单纯增加演示数量带来更高收益。如果相反——数量维度的收益持续线性增长——那这一条判断需要改写。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>第二，动作表示的争论会停在工程层面。</strong> 在出现「同一模型、仅替换动作表示」的受控对照之前，任何「某种表示更强」的说法都缺少支撑。这个对照实验目前不存在。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>第三，有效性会成为 benchmark 之外需要继续解决的问题。</strong> 协议层已经出现一批可操作的方法——序贯检验、主动采样、并行农场、规范驱动的安全检查；在本文纳入的这些工作中，相关方法的验证目前主要来自提出方，跨策略族、跨实验室的复现仍然不足。仍未被解决的是：我们怎么确认一个 benchmark 测的就是它声称的能力。目前最接近答案的做法是因果干预，但它还没有变成惯例。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">最后补一句限制，因为它适用于上面全部内容：本文引用的相关性结论，绝大多数来自提出对应基准的同一批作者，目前缺少跨策略族的第三方复现。所有数字都注明了 population 与协议条件，但<strong>「在某个设置下成立」和「在领域内成立」之间，还隔着一次独立复现。</strong></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:28px 0 12px;">主要来源</h2>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">本文数字与结论均来自以下工作。</p>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>阶段演进与基础模型</strong></p>
+<ul>
+<li>RT-1：<a href="https://arxiv.org/abs/2212.06817" target="_blank" rel="noopener">https://arxiv.org/abs/2212.06817</a></li>
+<li>RT-2：<a href="https://arxiv.org/abs/2307.15818" target="_blank" rel="noopener">https://arxiv.org/abs/2307.15818</a></li>
+<li>Open X-Embodiment：<a href="https://arxiv.org/abs/2310.08864" target="_blank" rel="noopener">https://arxiv.org/abs/2310.08864</a></li>
+<li>DROID：<a href="https://arxiv.org/abs/2403.12945" target="_blank" rel="noopener">https://arxiv.org/abs/2403.12945</a></li>
+<li>OpenVLA：<a href="https://arxiv.org/abs/2406.09246" target="_blank" rel="noopener">https://arxiv.org/abs/2406.09246</a></li>
+<li>Octo：<a href="https://arxiv.org/abs/2405.12213" target="_blank" rel="noopener">https://arxiv.org/abs/2405.12213</a></li>
+<li>π0：<a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener">https://arxiv.org/abs/2410.24164</a></li>
+<li>π0.5：<a href="https://arxiv.org/abs/2504.16054" target="_blank" rel="noopener">https://arxiv.org/abs/2504.16054</a></li>
+<li>GR00T N1：<a href="https://arxiv.org/abs/2503.14734" target="_blank" rel="noopener">https://arxiv.org/abs/2503.14734</a></li>
+<li>Gemini Robotics：<a href="https://arxiv.org/abs/2503.20020" target="_blank" rel="noopener">https://arxiv.org/abs/2503.20020</a></li>
+<li>AgiBot World Colosseo：<a href="https://arxiv.org/abs/2503.06669" target="_blank" rel="noopener">https://arxiv.org/abs/2503.06669</a></li>
+</ul>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>数据与学习配方</strong></p>
+<ul>
+<li>Data Scaling Laws in Imitation Learning：<a href="https://arxiv.org/abs/2410.18647" target="_blank" rel="noopener">https://arxiv.org/abs/2410.18647</a></li>
+<li>Is Diversity All You Need for Scalable Robotic Manipulation?：<a href="https://arxiv.org/abs/2507.06219" target="_blank" rel="noopener">https://arxiv.org/abs/2507.06219</a></li>
+<li>Towards Embodiment Scaling Laws in Robot Locomotion：<a href="https://arxiv.org/abs/2505.05753" target="_blank" rel="noopener">https://arxiv.org/abs/2505.05753</a></li>
+<li>Neural Scaling Laws in Robotics：<a href="https://arxiv.org/abs/2405.14005" target="_blank" rel="noopener">https://arxiv.org/abs/2405.14005</a></li>
+</ul>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>动作表示</strong></p>
+<ul>
+<li>Diffusion Policy：<a href="https://arxiv.org/abs/2303.04137" target="_blank" rel="noopener">https://arxiv.org/abs/2303.04137</a></li>
+<li>Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware：<a href="https://arxiv.org/abs/2304.13705" target="_blank" rel="noopener">https://arxiv.org/abs/2304.13705</a></li>
+<li>FAST：<a href="https://arxiv.org/abs/2501.09747" target="_blank" rel="noopener">https://arxiv.org/abs/2501.09747</a></li>
+<li>FASTer：<a href="https://arxiv.org/abs/2512.04952" target="_blank" rel="noopener">https://arxiv.org/abs/2512.04952</a></li>
+<li>Real-Time Execution of Action Chunking Flow Policies：<a href="https://arxiv.org/abs/2506.07339" target="_blank" rel="noopener">https://arxiv.org/abs/2506.07339</a></li>
+<li>Reshaping Action Error Distributions for Reliable VLA Models：<a href="https://arxiv.org/abs/2602.04228" target="_blank" rel="noopener">https://arxiv.org/abs/2602.04228</a></li>
+</ul>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>评测</strong></p>
+<ul>
+<li>Evaluating Real-World Robot Manipulation Policies in Simulation（SIMPLER）：<a href="https://arxiv.org/abs/2405.05941" target="_blank" rel="noopener">https://arxiv.org/abs/2405.05941</a></li>
+<li>ArmnetBench v0.1：<a href="https://arxiv.org/abs/2607.24481" target="_blank" rel="noopener">https://arxiv.org/abs/2607.24481</a></li>
+<li>Beyond Binary Success：<a href="https://arxiv.org/abs/2603.13616" target="_blank" rel="noopener">https://arxiv.org/abs/2603.13616</a></li>
+<li>Active Real-World Factor-Based Evaluation：<a href="https://arxiv.org/abs/2607.14439" target="_blank" rel="noopener">https://arxiv.org/abs/2607.14439</a></li>
+<li>AutoEval：<a href="https://arxiv.org/abs/2503.24278" target="_blank" rel="noopener">https://arxiv.org/abs/2503.24278</a></li>
+<li>RoboArena：<a href="https://arxiv.org/abs/2506.18123" target="_blank" rel="noopener">https://arxiv.org/abs/2506.18123</a></li>
+<li>Unmasking the Illusion of Embodied Reasoning in VLA Models：<a href="https://arxiv.org/abs/2604.18000" target="_blank" rel="noopener">https://arxiv.org/abs/2604.18000</a></li>
+<li>Benchmarking the Generality of Vision-Language-Action Models：<a href="https://arxiv.org/abs/2512.11315" target="_blank" rel="noopener">https://arxiv.org/abs/2512.11315</a></li>
+<li>Colosseum V2：<a href="https://arxiv.org/abs/2605.27759" target="_blank" rel="noopener">https://arxiv.org/abs/2605.27759</a></li>
+<li>LongBench：<a href="https://arxiv.org/abs/2604.16788" target="_blank" rel="noopener">https://arxiv.org/abs/2604.16788</a></li>
+<li>ManiGuard：<a href="https://arxiv.org/abs/2608.17386" target="_blank" rel="noopener">https://arxiv.org/abs/2608.17386</a></li>
+<li>VISER：<a href="https://arxiv.org/abs/2605.06311" target="_blank" rel="noopener">https://arxiv.org/abs/2605.06311</a></li>
+</ul>
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;"><strong>世界模型与人形</strong></p>
+<ul>
+<li>WorldEval：<a href="https://arxiv.org/abs/2505.19017" target="_blank" rel="noopener">https://arxiv.org/abs/2505.19017</a></li>
+<li>WorldGym：<a href="https://arxiv.org/abs/2506.00613" target="_blank" rel="noopener">https://arxiv.org/abs/2506.00613</a></li>
+<li>What-If World：<a href="https://arxiv.org/abs/2605.27589" target="_blank" rel="noopener">https://arxiv.org/abs/2605.27589</a></li>
+<li>Scaling World Model for Hierarchical Manipulation Policies：<a href="https://arxiv.org/abs/2602.10983" target="_blank" rel="noopener">https://arxiv.org/abs/2602.10983</a></li>
+<li>Hierarchical World Models as Visual Whole-Body Humanoid Controllers：<a href="https://arxiv.org/abs/2405.18418" target="_blank" rel="noopener">https://arxiv.org/abs/2405.18418</a></li>
+<li>Real-World Humanoid Locomotion with Reinforcement Learning：<a href="https://arxiv.org/abs/2303.03381" target="_blank" rel="noopener">https://arxiv.org/abs/2303.03381</a></li>
+<li>Scalable and General Whole-Body Control for Cross-Humanoid Locomotion：<a href="https://arxiv.org/abs/2602.05791" target="_blank" rel="noopener">https://arxiv.org/abs/2602.05791</a></li>
+<li>Allometric Scaling Laws for Bipedal Robots：<a href="https://arxiv.org/abs/2603.22560" target="_blank" rel="noopener">https://arxiv.org/abs/2603.22560</a></li>
+</ul>
+<blockquote style="border-left:3px solid #d3e0d8;padding-left:12px;color:#5c666f;font-size:14px;margin:0 0 16px;">
+<p style="font-size:16px;line-height:1.75;margin:0 0 14px;">全部条目均经 arXiv API 逐条比对标题与 ID；文中每个数字都标注了条件与来源位置。</p>
+</blockquote>
+</body>
+</html>
