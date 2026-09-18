@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>VLA 是怎么成为具身智能主线的？</title>
+</head>
+<body style="font-family:-apple-system,'PingFang SC','Heiti SC',sans-serif;color:#14161a;max-width:720px;margin:0 auto;padding:24px;background:#ffffff;">
+<h1 style="font-size:23px;font-weight:600;line-height:1.4;margin:0 0 22px;">VLA 是怎么成为具身智能主线的？</h1>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">开场：机器人为什么要用 VLM？</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个问题听起来像反问，但它其实是 VLA 这条线的起点。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">语言模型处理的是 token：一段文本进来，一个 token 序列出去。机器人最后要的东西完全不同——它需要一串连续动作，在几十毫秒到几百毫秒的时间尺度上落到电机或关节上。两边的输出形态没有天然的可对接性。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">所以「给 VLM 加一个机械臂」这句话是错的，至少是不完整的。<strong>VLA 的核心，是让视觉、语言条件与机器人动作学习进入同一个训练框架与接口</strong>——perception、language、action 不再靠三段各自维护的格式串起来，而是被放进同一套可以联合优化的训练目标里。<strong>多任务与多本体泛化是这条路线的扩展目标，不是它的定义条件</strong>：一个只在一个本体上训练的模型，只要动作学习确实处在同一个训练框架里，它仍然是 VLA。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">本文说的是统一训练框架，不是「所有 VLA 共用一个损失函数」。不同工作有各自的目标函数、数据配比与训练阶段安排；共同点是这些组成部分被放进了同一个可联合优化的系统，而不是由人工设计的中间格式串起来。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这件事为什么会成为问题，可以从「同一个」这三个字往回推。在模块化系统里，感知、语言与控制器之间用固定格式通信：感知输出检测框或点云，语言输出目标或子任务标签，控制器按自己的接口接收。这种系统能跑，但中间接口是人工设计与维护的——数据分布一变，接口就要重做。而且每一段通常只看到自己需要的那部分信息；如果这些模块不是端到端联合优化，前端误差一般不会通过同一个目标函数直接反向传播到后端。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">端到端学习要解决的问题正是这个：<strong>让同一次训练同时决定「看到什么」「听懂什么」和「做什么」，中间不留人工设计的格式边界。</strong> 代价是接口变得不可读：出问题时，你没法像调试模块那样指着某一段说「就是这里错了」。收益是接口可以被数据改写：在接口稳定的前提下，新任务、新物体、新场景可以通过新增数据来覆盖，而不必重新设计整套中间接口——当然，这通常仍需要在目标设置上重新训练或适配。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这也是为什么「动作」会成为这条线最难的一环。感知与语言在 VLM 里已经有成熟的表示与目标函数；动作没有。它既不是语义 token，也不是纯数值序列，而且它的正确性只有在物理世界执行之后才能确认。VLA 这条线的全部技术分歧，几乎都可以回溯到「怎么让动作适合被这样训练」这个问题上。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这篇文章想回答五个问题：VLA 比传统 robot policy 多解决了什么；VLM 为什么会被拉进机器人控制；RT-1 与 RT-2 各自真正改变了什么；OXE、Octo、OpenVLA 为什么让 VLA 从单个模型变成一条可扩展路线；以及 2025–2026 的 π0、GR00T、Gemini Robotics、DexVLA、OpenVLA-OFT 到底是在延续 VLA，还是在分叉它。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">动手之前先约定一件事：本文说的「VLA 主线」指<strong>问题主线</strong>，不是模型谱系。这条线上真正连续的是问题——视觉与语言条件怎么进入控制、动作用什么接口表示、多任务与跨本体怎么统一、动作生成由谁承担；具体模型之间更多是<strong>共享问题、各自取法</strong>，而不是某个模型的下一版。下文按时间走，但每一步都会说明：这是同一问题上的另一条取法，还是对同一取法的继续改进。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">一、从 Robot Policy 到 Generalist Policy</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">在 VLA 出现之前，机器人学习的组织方式更接近「一个任务一个策略」。抓取训练一个、放置训练一个，换物体、换桌面、换光照，往往要重新采数据、重新调参。数据没有错，问题在于<strong>每个任务的表示接口是私有的</strong>：这一台机器人的动作空间、这一批数据的采集协议，不构成下一台机器人能直接用的东西。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">RT-1 的变化发生在接口上。它把动作离散成 token，用 Transformer 做序列预测：输入是图像观测与自然语言指令，输出是离散化的 base 与 arm 动作。论文报告的规模是 35M 参数、3 Hz 输出频率，训练数据来自 13 台机器人、17 个月采集的约 130k 条演示，覆盖 700 项以上任务，评测包含 3000 次真机试验。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这组数字要连着条件读：<strong>35M 与 3 Hz 是 2022 年那个模型在当时的硬件上的报告值，它们不是「离散 token 路线只能做到这样」的证据。</strong> 这一点在后面几节会反复用到。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">RT-1 留下的真正东西，是把「任务不同」这个问题改写成了「数据与接口是否可以统一」。一旦动作能进序列建模，多任务混合训练、语言条件切换、按任务扩容数据，就都变成了可以用同一套工程手段推进的事情。<strong>generalist policy 的问题意识由此出现：先让一份数据能同时服务多件事，再谈泛化。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里要说清 generalist policy 与 task-specific policy 的差别到底在哪，否则很容易被读成「模型变大了」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">在 task-specific 的设定里，复用发生在<strong>代码与模型结构</strong>层面：同一套流程与网络设计可以训很多任务，但权重彼此独立——一个抓取策略不会因为另一个放置策略训得更好而受益。在 generalist 的设定里，复用发生在<strong>数据与接口</strong>层面：一批数据可以同时改善多个任务，一个接口可以同时承载多种指令。前者优化的是单位任务的训练成本，后者优化的是每一份新数据的边际贡献。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个转向也带来了新的失败模式，后面几节都会遇到：当不同任务的数据被混在一起训练时，冲突几乎是结构性的。动作空间的量纲、控制频率、任务的时长分布都不一样，模型要在同一组参数里容纳它们。<strong>generalist policy 的第一个真正难题不是泛化，而是「不互相干扰」。</strong> RT-2 的 co-fine-tuning、π0 的多种机器人配置混合、GR00T 的数据金字塔，都可以看作对同一个问题的不同回答。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">二、RT-2：为什么 Action 可以进入 VLM</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">VLM 的输出本来是文本。RT-2 的做法，是让动作也变成文本——论文摘要的表述是：为了把自然语言回答和机器人动作放进同一个格式，动作被表示为文本 token，并以与自然语言 token 相同的方式并入训练集；训练方式是<strong>在机器人轨迹数据与互联网规模的视觉语言任务上做 co-fine-tuning</strong>；论文报告的评测规模是 6k 次试验。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">它在方法上回答的就是一个接口问题：<strong>如果动作能写成 token，那么「预测下一个 token」这套目标函数就可以同时覆盖语言与动作。</strong> 这带来的直接后果是，互联网预训练的视觉语言知识不需要转换就能作用到动作输出上。论文报告了训练分布之外指令的响应，以及「拿起最小的物体」这类基础推理。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">顺带说清类别命名的来源：<strong>「vision-language-action model（VLA）」这个命名来自 RT-2 论文本身</strong>（摘要直接把这一类模型称为 VLA）。但命名被继承，不等于取法被继承。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">还要写清它报告了什么、没回答什么。论文报告的是视觉语言知识在它的设置下能够参与动作生成；它没有回答机器人泛化问题是否被解决——这份工作没有跨本体的规模化验证，也没有长程任务的系统评测。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">还有两个限制必须一起写。第一，<strong>架构与基座能力本身仍然重要</strong>：RT-2 用的本身就是当时较大的 VLM，把它读成「只要数据够多就行」，等于抹掉了这条线的起点。第二，<strong>tokenization 不是 VLA 的最终答案</strong>：把动作写成 token 只是其中一种办法，后面会看到相当一部分被归入 VLA 的工作并不使用它。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">还有一层值得单独说：为什么「让动作进 token 空间」这件事本身有价值，而不只是实现上的便利。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">先排除一个常见误解：<strong>连续回归本身并不缺少任务语义。</strong> 这类模型完全可以通过条件输入（语言指令、任务标识、视觉上下文）学到「推到桌沿」与「推到桌角」的区别——语义来自条件，不来自输出形式。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">RT-2 的关键也不是给动作增加语义，而是<strong>把动作预测放进与语言 token 兼容的自回归接口</strong>。动作与语言共用一套输出形式之后，视觉语言预训练得到的条件化能力可以直接参与动作预测，中间不需要额外的转换层。在本文看来，这是它能同时报告「响应训练分布之外的指令」与「基础空间推理」的一条结构性解释。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">代价同样具体，而且和后来的分叉直接相关。把动作离散成 token 之后，<strong>离散粒度、token 序列长度与自回归解码效率之间会出现新的耦合</strong>：粒度越细、序列越长，推理开销越大；粒度越粗，可表达的动作分辨率越低。这条耦合会在 §六 的三根轴上重新出现——<strong>它们属于这一路线需要共同处理的结构性 trade-off，而不是这一路线独有的缺陷</strong>，其他路线也各有自己的取舍。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">三、Open X-Embodiment：跨本体数据解决了什么</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">RT-2 之后最现实的问题不是模型不够大，而是数据放不到一起。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">2023 年 10 月的 Open X-Embodiment 汇集了 22 种机器人本体、21 家机构的合作数据，覆盖 527 项技能与 160266 个任务，并提供统一数据格式。<strong>这份工作把「统一格式」本身列为一等贡献</strong>，这个选择很关键——它等于承认：跨本体训练的第一道障碍不是样本量，而是各家的观测、动作空间、控制频率与传感配置都不一样。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">所以这一节真正要回答的问题是：<strong>如果一个模型要跨机器人工作，训练接口必须统一哪些东西？</strong> 至少五件：观测怎么表示（相机配置、分辨率、传感器集合）、动作怎么定义（关节空间还是末端位姿、有无夹爪）、本体信息怎么给（同一动作在不同机器人上是不同物理量）、技能与任务怎么切分、以及一条数据的最小单位怎么定义。任何一项没有统一，跨本体训练就很难避免退化成「分别训练、各自微调」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里必须立刻加一条反证，否则这一节很容易写偏。一项工作从任务、本体、演示者三个维度检验了「越多样越好」这个直觉，报告<strong>任务多样性比单任务演示数量更关键，但多本体预训练对跨本体迁移并非必需</strong>——只用高质量单本体数据训练的模型也能有效迁移。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">因此准确的表述是：<strong>cross-embodiment 是 VLA 与 generalist policy 扩展的一条重要路线，但不是任何一方的定义。</strong> 把「VLA＝跨本体」写进文章，会同时错两次：既高估了多本体数据的必要性，也低估了单本体高质量数据的价值。这个分歧（多本体 vs 单本体）目前在公开材料里没有被解决，本文不站队。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把 OXE 的贡献放准位置也有帮助：它解决的是<strong>数据标准化、聚合与跨本体迁移</strong>问题，并用 RT-X 系列模型展示了 X-robot policy 的可行性。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">还有一条容易被忽略的限定：<strong>OXE 的价值主要不是「数据更多」，而是提供了一套可以被合并与扩展的数据格式与接口约定。</strong> 在它之前，把两个实验室的数据放在一起训练，要先写一个转换层；每加一家，就多一层。统一格式之后，加数据的边际成本从「写接口」降到「按格式提交」——这才是跨本体训练能够变成一条常规工程路线的机制。至于正迁移本身，论文报告的是存在性证据（在若干任务与本体上出现了正向迁移），不是一个可以外推的规模律。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">四、Octo：从 VLA 分叉出的 Generalist Policy</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">OXE 之后出现了一批开源基线，其中最容易被和 RT-2 混为一谈的是 Octo。它不是 RT-2 的复制品，而是另一条路线。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">Octo 在 OXE 的 800k 条轨迹上训练，主干是 transformer，动作由一个轻量 diffusion head 生成、一次预测一段连续动作（action chunk），并支持语言指令或目标图像两种条件方式。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把它和 RT-2 并排看，差异在动作侧的位置：RT-2 让动作留在语言模型的输出空间里；Octo 把动作从主干里分出来，交给一个专门生成连续动作块的模块。<strong>「VLA」与「generalist policy」这两个术语在这里部分重叠，但它们的技术定义并不相同</strong>：前者强调「视觉语言条件下的动作学习接口」，后者强调「一个策略覆盖多任务与多场景」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">所以更准确的说法是：Octo 属于相邻问题上的另一条 generalist policy 路线。它与 RT-2 时间相邻、数据基础部分相关、问题空间相关，<strong>但技术实现并不相同</strong>；它不是 RT-2 的下一代。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个重叠不是文字问题，它会影响后面所有的判断。当我们说「VLA 路线」时，容易默认动作一定在语言模型的输出空间里；但从 Octo 开始，动作已经可以是一个独立子系统了。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把 Octo 的定位说清楚，有助于理解它为什么重要。它明确把自己放在「通用策略的微调起点」这个位置上，而不是「替代所有专用策略」。这个定位本身是一种判断：<strong>通用模型的价值可能不在于零样本干完所有事，而在于把每个新任务需要的数据量压下来。</strong> 这条思路后来出现在几乎所有开放的通用策略上，也是「开源 + 可微调」这套组合在机器人领域能流行的原因。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">五、OpenVLA：为什么需要一个真正开放的 VLA</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">如果 OXE 解决的是数据接口，Octo 给出的是「通用策略可以怎么做」，那么 OpenVLA 回答的是另一个问题：<strong>这条路线能不能被复现和继续推进？</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">OpenVLA 是 7B 模型，语言侧用 Llama 2，视觉编码器融合 DINOv2 与 SigLIP 的预训练特征，训练数据是 970k 条真机演示，动作走离散 token 加自回归；它把高效微调当作可采纳性的关键问题来对待。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">它的意义不在于「又一个更大的模型」，而在于把四件事组合成了一个可复用的研究基座：<strong>一个公开的 VLM backbone、一批公开的机器人数据、一个明确定义的动作接口、以及一套可以拿来对比的评测起点。</strong> 在此之前的跨团队比较很难排除各自的实现差异；有了公开基座，<strong>动作接口才从实现细节变成可以公开讨论的对象</strong>，也才有可能把变量固定住再问「换动作表示会怎样」。这个问题到今天仍未被完整回答（见 §六），但<strong>能被提问</strong>本身已经是这一步的贡献。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">要防止一个反向推论：<strong>不能写成「因为 OpenVLA 出现，VLA 才成为主线」。</strong> 它提供的是可复现的实验条件，不是这条线成立的原因。另外，7B 与 970k 是它的配置描述，不是「大就是好」的性能结论。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">六、Action Representation：VLA 真正的分叉点</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">到这里，一个看起来必须回答的问题出现了：哪种动作表示更好？</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">要回答它，先得把「动作表示」拆开。把前面出现的工作按三组属性重新排列，会看到三个可以被分别讨论的<strong>分析轴</strong>。<strong>需要先说清：这三根轴是本文用来比较不同工作的分析工具，并不意味着这三个变量在真实系统中可以完全独立控制。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>轴 A，动作空间：离散 token 还是连续量。</strong> RT-2 与 OpenVLA 走离散；ACT、Diffusion Policy、RDT-1B、π0、DexVLA、OpenVLA-OFT 走连续。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>轴 B，时间粒度：单步还是动作块。</strong> ACT 提出 Action Chunking with Transformers，用来缓解误差累积与人类演示的非平稳性；此后多数工作输出一段动作。RT-2 与 OpenVLA 在本文引用的材料里没有明确的分块表述，这里按「未见披露」处理。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>轴 C，生成方式：自回归、扩散 / flow matching，还是并行回归。</strong> RT-2、OpenVLA、FAST 走自回归；Diffusion Policy、RDT-1B、π0、DexVLA 走扩散或 flow matching；OpenVLA-OFT 走并行解码加 L1 回归。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><img alt="VLA 的三根动作接口轴" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/002/images/fig1_action_interface_axes.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" /></p>
+<p style="font-size:14px;line-height:1.7;color:#8a929b;margin:0 0 22px;"><em>图 1：三根轴是本文的分析框架，不是领域标准分类；横向只表示设计空间，不表示优劣、先后或演进方向。三个维度之间存在耦合——真实系统中改变一个维度，往往会同时改变序列长度、控制频率、解码成本、训练目标或模块划分。图内示例只标出各工作已被核验的属性：One-Step 的 one-step 指采样 / 解码步数，不是时间粒度上的 single-step（其论文仍预测 action chunk）；OpenVLA-OFT 的 parallel 指并行解码加 L1 回归，不与自回归 / 扩散 / flow matching 同级。examples are illustrative, not a controlled comparison。</em></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把三根轴叠起来，每个工作落在不同的格子里。FAST 是「离散 + 分块 + 自回归」，面向自回归 VLA 处理高频连续动作序列，是在这条路线内部继续改进接口；FASTer 改用可学习 tokenizer；π0 是「连续 + 分块 + flow matching」；OpenVLA-OFT 是「连续 + 分块 + 并行回归」。<strong>把它们读成一条优劣排序，等于把三个轴压缩成一个变量。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">然后是这一节最重要的一句：<strong>目前没有足够的单变量受控实验，可以宣布某一种 action representation 普遍优于其他路线。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">三个具体的核查点。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>OpenVLA-OFT</strong> 是本文纳入来源中较接近受控比较的工作：它固定 OpenVLA 作为代表性基座，比较微调阶段的动作解码、动作表示与学习目标，给出的配方是并行解码 + action chunking + 连续动作表示 + L1 回归目标，并在其设定的 LIBERO 基准上报告了相应结果。但它能回答的只是<strong>固定 base、微调阶段的 fine-tuning / decoding / 动作接口比较</strong>：改变的是几项设计一起构成的组合，不是只替换表示的严格单变量实验，也不构成预训练层面的对照。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>One-Step Action Generation</strong> 从 condition-target 结构出发，论证 VLA 的动作生成更接近 image-to-text 而不是 text-to-image，并用标准 flow matching 的 irreducible velocity loss 把这个观点形式化（以 8 模态玩具实验与 image-to-text MNIST 验证），报告高噪声训练能提升单步解码在 LIBERO 上的表现、LIBERO-Long 上达到 95.6%，同时报告削弱条件或扩大 horizon 的消融会抹掉单步收益。<strong>它支持的是它自己 flow-matching 实验框架内的判断</strong>——连续动作路线内部出现了「步数可以压缩」的证据，不是跨表示的对照。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>DexVLA</strong> 的基座 VLM 是 Qwen2-VL，动作由一个独立的、规模为 10 亿参数的扩散专家承担，专家使用多个 head 支持跨本体学习，训练分三段（跨本体预训练专家 → 对齐本体 → 后训练适配新任务）；论文 v3 记录使用 100 小时 demonstration data，报告在单张 NVIDIA A6000 上达到 60Hz，并报告在论文自己的 long-horizon laundry folding 设置中优于 π0。<strong>这组数字不能被写成「数据量小所以架构更好」</strong>：它是一个特定设置下的报告值，同一篇论文同时给出了动作侧的架构选择与数据规模，两个变量没有被分开。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">所以这一节的结论是：动作表示是当前最活跃、也最容易被工程约束检验的设计轴，但「哪种表示更强」目前缺对照，属于证据不足。<strong>把某一种表示写成普遍更优，超出了现有证据。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">为什么这个缺口这么难补？<strong>在真实系统里改变一个轴，经常会迫使其他变量一起改变。</strong> 想让动作从离散变连续，通常要同时调整生成方式（自回归不再适用）、时间粒度（连续动作往往与 action chunking 搭配使用）和训练目标（分类损失换成回归或去噪损失）。<strong>这正是单变量对照稀缺的结构性原因</strong>，而不只是没人愿意做这个实验。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">还有两个常被混进来的变量要单独标出。第一是<strong>控制频率与时延</strong>：动作表示会影响能否在给定频率下持续输出动作，但这属于可用性约束，不等于能力上限——拿某个工作在特定硬件上的报告频率评价整类方法，会重复 RT-1 的 3 Hz 那个误读。第二是<strong>训练目标</strong>：当表示与误差分布的处理方式一起变化时，性能差异未必来自表示本身。这两个变量在本文里都不作为支持或反对某种表示的证据。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">七、从 OpenVLA 到 π0：VLA 为什么开始拆分动作模块</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">如果 RT-2 回答的是「动作能不能进语言模型的输出空间」，π0 回答的是另一个问题：<strong>动作一定要是语言 token 吗？</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">π0 的 VLM 主干权重初始化为 PaliGemma，动作由<strong>独立的 action expert 通过 flow matching 生成</strong>，用的是 action chunking 架构。数据上，它的预训练混合数据包含约 10000 小时自采灵巧操作数据，来自 7 种机器人配置与 68 项任务，另加 OXE、DROID 与 Bridge 等公开数据。这里要写清口径：<strong>10000 小时是自采部分，不等于总混合数据量</strong>，把它当成总量会高估规模。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">为什么可以拆？关键在「条件」与「生成」是两件可以分开的事。§二 提到，把动作写进语言 token 空间会带来离散粒度、序列长度与解码效率之间的耦合；而「理解看到什么、要做什么」与「在该条件下生成连续动作」并不需要由同一个结构承担。保留视觉语言部分作条件来源，把动作生成交给专门输出连续动作的模块，就绕开了那组耦合。<strong>依据是这两件事可以解耦，不是哪个模块更先进。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">结构上发生的是这样一件事：<strong>在一部分代表性工作里</strong>，VLA 的核心开始从「action 作为语言 token」转向「视觉语言条件 + 专门的动作生成器」。视觉语言部分负责理解与条件化，动作部分作为一个可以单独设计的子模块存在。<strong>这不是换一个动作头，而是把动作生成拆成了独立子系统。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这类工作仍属本文范围：本文处理的是<strong>「视觉语言条件 + 机器人动作」这个问题</strong>，而不是某一种动作实现——动作模块不用语言 token，改变的是解法，问题本身没有变。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">但同样不要把这一步写成淘汰。<strong>FAST 与 FASTer 的存在正好是反例</strong>：它们继续在自回归路线内部改进动作 tokenization，并报告在推理速度与任务性能上同时超过此前的自回归 VLA。离散 token 路线与连续动作模块不是先后关系，而是并行展开的两条支线——这一点在第一篇里已经出现过，在这里它改变的是「VLA 有几个技术方案」这个问题。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把 π0 的意义压缩成一句话：<strong>它说明了「视觉语言理解」与「动作生成」可以由不同的结构承担，两者之间用条件关系连接，而不是共用一套输出表示。</strong> 这听起来只是架构细节，但它改变了一部分后续工作的提问方式：如果说 RT-2 那一侧的问题是「怎么把动作写进语言模型」，在这些工作里，问题变成了「动作生成应该由什么结构承担，它需要哪些条件输入」——问题对象从表示形式移到了模块划分。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里也是全文最容易写过头的地方。<strong>「动作模块化」是部分代表性工作出现的一次架构分叉，不是一次全行业转向。</strong> 同一时期有工作继续在自回归路线里改进动作 tokenization（FAST / FASTer），也有工作走连续动作加并行回归（OpenVLA-OFT），还有工作尝试把动作生成放到 latent 空间（§八）。这条线上没有「π0 之后大家都开始……」这回事——不同取法在不同的约束下各自成立。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">八、2025–2026：VLA 开始越过 VLA</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">2025 到 2026 年，一批工作把研究问题推到了「VLM + 动作模块」这个描述之外。<strong>这里的「越过」指的是研究接口的外扩，不是一条自然演进链</strong>：这些工作共享「视觉语言条件 + 动作」这个基本问题，但各自处理的是不同层级的问题，彼此之间不存在继承关系。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><img alt="VLA 问题被拆到了哪些层" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/002/images/fig2_vla_problem_layers.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" /></p>
+<p style="font-size:14px;line-height:1.7;color:#8a929b;margin:0 0 22px;"><em>图 2：中心是共同研究的问题，周围五项是并行的研究接口，不是层级，也不构成「下一代 → 再下一代」的替代链（图中的点状弱连接只表示它们共享同一个问题，不表示方向）。这是本文的编辑部分析框架，不是领域标准分类；VLA、Generalist Policy、Robot Foundation Model 之间本文不作严格集合包含关系的判断。2026 年的条目仅作 research directions（examples），不作为共识证据。</em></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">π0.5 用异构任务的协同训练换取更广的泛化；GR00T N1 改用双系统（System 2 负责视觉语言理解，System 1 是扩散 Transformer），并给出「数据金字塔」这一数据组织方式——自采遥操作数据 88 小时经视频生成模型扩增到 827 小时，约放大 10 倍。Gemini Robotics 把推理与执行拆到两端：云端 VLA backbone 加机器人端本地 action decoder，输出 action chunks；论文分别报告约 250ms 的端到端延迟与 50Hz 的等效控制频率，<strong>这是两个不同指标，不能相互换算，也不能与本地控制频率或相对提升放在一起比较</strong>。DexVLA 则把扩散专家做成可插拔并对齐到本体。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>这些工作外扩的方向不在同一个技术点上。</strong> 至少七条：reasoning、planning、correction、world modeling、embodiment adaptation、continual learning、data generation——它们是接口问题被拆到不同层的结果，而不是某一条路线的连续推进。下面只取会改变主线判断的部分，其余只作为后续观察记录。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>reasoning 与 planning。</strong> 一篇工作把具身认知、任务规划、纠错与 pointing 整合进单一架构，配套 Planner-Grounder-Corrector 闭环，并开源评测框架 EmbodiedEvalKit；其模型规模与 benchmark 排名均为作者自陈，本文只采用「能力被纳入同一基础模型体系」这一技术方向。另一篇工作研究的问题是 VLM 能否直接用自然语言推理引导低层策略：先在专家生成的推理轨迹上做 mid-training，再用离线动作数据做单步 rubric-based RL，在两个受控试验台上实例化：Language Table 与仿真的双臂 grocery packing；报告在两个 benchmark 上均优于 instruction-only 模仿学习基线。<strong>这是受控试验台下的证据，其中 grocery packing 为仿真设置，不外推为真实机器人上的普遍能力。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>world modeling 与 latent 表示。</strong> 一篇工作提出 latent world-action model，主张在 latent 空间对世界动力学做推理来生成动作，该论文提出的假设是，动作生成质量与 latent 空间的几何结构密切相关；论文还报告基于重建的动作 tokenization 目标会让表示偏向低层信号保真度，造成重建质量与下游控制表现不一致。另一篇工作把问题定义为 camera-frame 观测与 robot-frame 动作之间的错配，提出为每个像素关联机器人坐标系下 3D 位置表示的 robot-centric pointmap，并报告在 RoboCasa 上同时改善了 π0.5 与 SmolVLA。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>部署后的可修改性。</strong> 一篇工作构建了真实世界（不是仿真）的持续学习基准，含十个顺序操作任务、覆盖单臂与双臂，报告朴素顺序微调会导致严重的灾难性遗忘，并报告在其等价算力预算设置下，配置得当的经验回放优于联合多任务训练。方法侧另有工作用双时间尺度 LoRA 门控把适配分成短期与长期两组 adapter，并在回放阶段用缓存高效随机回放避免存储完整轨迹——这是 continual adaptation 上的一条方法分叉，<strong>不代表该方向已经有了被普遍采用的方案</strong>。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">还有一类工作提出了更激进的问题框架：把 observation-to-action 学习的困难归纳为 transition realizability gap，拆成 transition ambiguity、prediction–execution mismatch、experience–realization mismatch 三类，再用共享的 action-grounded transition 接口把 memory、prediction 与 action 组织在一起。<strong>这是该论文提出的问题框架，不是领域共识</strong>，且其摘要没有给出 benchmark 与量化结果，本文只作为方向记录，不作为结论依据。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这一节的结论必须是收敛的、也是克制的：<strong>「Robot Foundation Model」目前没有一个被全领域接受的统一判据。</strong> VLA、generalist policy、robot foundation model、embodied foundation model 这几个词在现有材料里边界互相重叠，不能写成严格的上下级关系。不同工作分别使用 VLA、WAM、EFM、reasoner 等术语，至少说明这些概念的边界仍存在明显分歧；但仅凭命名不能推出它们已经形成统一体系，反过来也不能据此判断哪一套命名会成为主流。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把它们再压一层，可以得到一个更具体的判断：<strong>这不是同一个问题的五种答案，而是同一个接口问题在不同层上被切开</strong>——这些方向之间既没有先后顺序，也没有共同的评价口径。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这带来一个对判断有实际影响的后果：<strong>「VLA 主线」这个词会越来越好用，也越来越不好用。</strong> 好用，是因为这些工作都还共享「视觉语言条件 + 动作输出」这个基本形状；不好用，是因为当接口问题的不同层被不同社区分别攻关时，「谁在延续主线、谁在分叉」很难靠模型名字回答。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">九、所以 VLA 到底解决了什么？</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">回到开头那个问题。VLA 真正改变的不是「机器人终于能看图说话」，而是下面五件事：</p>
+<ol style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;">
+<li><strong>perception、language、action 可以进入同一个可训练系统</strong>，而不需要三套彼此不便沟通的模块。</li>
+<li><strong>robot data 开始进入 foundation-model training pipeline</strong>：机器人演示数据被放进与视觉、语言联合训练的统一数据与接口体系。</li>
+<li><strong>action interface 成为一个一等研究变量</strong>：离散还是连续、单步还是分块、自回归还是扩散，都是可以被单独讨论、也可以被工程约束检验的设计选择。</li>
+<li><strong>generalization 的研究问题扩展到 task + embodiment + environment</strong>：OXE 式的数据统一让「换本体」成为与「换任务」并列的研究问题，而不是默认它已经被解决。</li>
+<li><strong>VLA 可能最终分叉为多个架构</strong>：action 模块化的路线、reasoning 与 test-time compute 的路线、world-action 与 latent 表示的路线，目前都在同时展开。</li>
+</ol>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这五件事需要一句范围限定，否则会被读成过度承诺。它们描述的是<strong>研究问题的形态变化</strong>，不是部署能力的达成。到今天为止，这条线的公开证据仍然主要来自提出方自己的实验设置，跨实验室、跨策略族的独立复现仍然稀少；训练数据规模、评测协议、硬件条件在不同工作之间也没有统一口径。<strong>「VLA 让这些问题变得可以被研究」和「VLA 解决了这些问题」是两句话</strong>；而且「在某个设置下成立」和「在领域内成立」之间，还隔着一次独立复现。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这不是一份胜利宣言。这条线上仍然有三个未解问题，而且它们都不是工程细节：</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第一，action representation 的真正单变量对照仍然缺失。</strong> 我们至今没有一个「同一模型、只替换动作表示、其余全等」的实验。OpenVLA-OFT 固定的是微调阶段的单一基座，2026 年的新工作比较的也多是各自框架内部的条件。在这个对照出现之前，任何「某种表示更强」的写法都缺少支撑。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第二，cross-embodiment data 的「有效规模」没有统一单位。</strong> OXE 给技能数与任务数，DROID 给轨迹数，π0 给小时数，三者之间没有折算关系。这直接导致一个基础问题无法回答：多少跨本体数据才算够。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第三，VLA 与 Robot Foundation Model 缺少公认边界。</strong> 当一批工作分别自称 VLA、WAM、EFM、reasoner 时，「谁属于这条主线」就不是一个可以靠名字回答的问题，而需要一套可判定的判据。这套判据目前不存在。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">最后把「主线」这个词收口。本文说的是<strong>问题主线</strong>——视觉与语言条件 → 动作接口 → 多任务与跨本体 → action representation → action module → reasoning / world-action / continual adaptation；它不是<strong>模型主线</strong>。这条线上不存在「模型 A 是模型 B 的前身」这种关系：RT-2 的命名被继承，Octo 走的是另一条 generalist policy 路线，π0 换掉了动作侧的承担者，2026 年那批工作则把问题拆到了更细的层。<strong>把这条线读成一条替代链，会同时误读每一环。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">---</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">与第一篇的边界</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第一篇是全景：三阶段范式转移、数据分布、动作表示、评测、World Model 与人形。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">本文只做 VLA 这一条线：它为什么出现、接口问题被反复重述成什么、分叉发生在哪里、哪些问题仍没有答案——<strong>不再重复第一篇的评测框架、数据 scaling 与人形两条支线</strong>。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">两篇共用的来源主要在动作表示与评测两处，但切入角度不同：第一篇问「三年里讨论重心移动到了哪里」，</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">本文问「VLA 这条线自己的问题是什么」。<strong>如果只能读一篇：想看全景读第一篇，想看 VLA 的技术主线读本文。</strong></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">主要来源</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">本文数字与结论均来自以下工作。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>主线模型</strong></p>
+<ul style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;">
+<li>RT-1：<a href="https://arxiv.org/abs/2212.06817" target="_blank" rel="noopener">https://arxiv.org/abs/2212.06817</a></li>
+<li>RT-2：<a href="https://arxiv.org/abs/2307.15818" target="_blank" rel="noopener">https://arxiv.org/abs/2307.15818</a></li>
+<li>Open X-Embodiment：<a href="https://arxiv.org/abs/2310.08864" target="_blank" rel="noopener">https://arxiv.org/abs/2310.08864</a></li>
+<li>Octo：<a href="https://arxiv.org/abs/2405.12213" target="_blank" rel="noopener">https://arxiv.org/abs/2405.12213</a></li>
+<li>OpenVLA：<a href="https://arxiv.org/abs/2406.09246" target="_blank" rel="noopener">https://arxiv.org/abs/2406.09246</a></li>
+<li>π0：<a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener">https://arxiv.org/abs/2410.24164</a></li>
+<li>π0.5：<a href="https://arxiv.org/abs/2504.16054" target="_blank" rel="noopener">https://arxiv.org/abs/2504.16054</a></li>
+<li>GR00T N1：<a href="https://arxiv.org/abs/2503.14734" target="_blank" rel="noopener">https://arxiv.org/abs/2503.14734</a></li>
+<li>Gemini Robotics：<a href="https://arxiv.org/abs/2503.20020" target="_blank" rel="noopener">https://arxiv.org/abs/2503.20020</a></li>
+</ul>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>动作表示与能力增强</strong></p>
+<ul style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;">
+<li>ACT / ALOHA：<a href="https://arxiv.org/abs/2304.13705" target="_blank" rel="noopener">https://arxiv.org/abs/2304.13705</a></li>
+<li>Diffusion Policy：<a href="https://arxiv.org/abs/2303.04137" target="_blank" rel="noopener">https://arxiv.org/abs/2303.04137</a></li>
+<li>FAST：<a href="https://arxiv.org/abs/2501.09747" target="_blank" rel="noopener">https://arxiv.org/abs/2501.09747</a></li>
+<li>FASTer：<a href="https://arxiv.org/abs/2512.04952" target="_blank" rel="noopener">https://arxiv.org/abs/2512.04952</a></li>
+<li>SpatialVLA：<a href="https://arxiv.org/abs/2501.15830" target="_blank" rel="noopener">https://arxiv.org/abs/2501.15830</a></li>
+<li>DexVLA：<a href="https://arxiv.org/abs/2502.05855" target="_blank" rel="noopener">https://arxiv.org/abs/2502.05855</a></li>
+<li>OpenVLA-OFT：<a href="https://arxiv.org/abs/2502.19645" target="_blank" rel="noopener">https://arxiv.org/abs/2502.19645</a></li>
+<li>Real-Time Execution of Action Chunking Flow Policies：<a href="https://arxiv.org/abs/2506.07339" target="_blank" rel="noopener">https://arxiv.org/abs/2506.07339</a></li>
+</ul>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>反证与限定</strong></p>
+<ul style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;">
+<li>Is Diversity All You Need for Scalable Robotic Manipulation?：<a href="https://arxiv.org/abs/2507.06219" target="_blank" rel="noopener">https://arxiv.org/abs/2507.06219</a></li>
+</ul>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>2026 年新增（进入正文）</strong></p>
+<ul style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;">
+<li>Lumo-2：<a href="https://arxiv.org/abs/2607.11270" target="_blank" rel="noopener">https://arxiv.org/abs/2607.11270</a></li>
+<li>One-Step Action Generation：<a href="https://arxiv.org/abs/2606.05737" target="_blank" rel="noopener">https://arxiv.org/abs/2606.05737</a></li>
+<li>Robot-Centric Pointmaps：<a href="https://arxiv.org/abs/2607.11498" target="_blank" rel="noopener">https://arxiv.org/abs/2607.11498</a></li>
+<li>R³：<a href="https://arxiv.org/abs/2608.26053" target="_blank" rel="noopener">https://arxiv.org/abs/2608.26053</a></li>
+<li>Real-World Continual VLA：<a href="https://arxiv.org/abs/2605.26820" target="_blank" rel="noopener">https://arxiv.org/abs/2605.26820</a></li>
+<li>LifelongVLA：<a href="https://arxiv.org/abs/2607.14852" target="_blank" rel="noopener">https://arxiv.org/abs/2607.14852</a></li>
+<li>Embodied-R1.5：<a href="https://arxiv.org/abs/2606.11324" target="_blank" rel="noopener">https://arxiv.org/abs/2606.11324</a></li>
+<li>UniMPA：<a href="https://arxiv.org/abs/2609.11875" target="_blank" rel="noopener">https://arxiv.org/abs/2609.11875</a></li>
+</ul>
+<blockquote style="border-left:3px solid #d3e0d8;padding-left:12px;color:#5c666f;font-size:14px;margin:0 0 16px;">
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">全部条目的 arXiv ID 与标题均经 arXiv API 逐条比对；本文出现的每个数字均可追溯到对应论文的来源位置。</p>
+</blockquote>
+</body>
+</html>
