@@ -13,7 +13,7 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">它之所以在 2026 年集中出现，和两个前提同时成熟有关。一是视频生成模型已经能稳定地推进时间轴，于是「把未来画出来」从研究演示变成了可用的组件；二是 VLA 已经铺开到一批真实任务上，让「反应式接口在什么情况下不够用」变成了可以观察的问题。两条线在同一个时间点交汇，就出现了把「预测」接进控制回路的尝试。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">下文说的每一处分类，来源都是这篇 survey 或它引用的具体论文；编辑部自己的解释会单独标注。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">一、VLA 为什么会遇到「动作后果」问题</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">要说清这件事，先要把 VLA 的接口写准确。按 survey 的形式化，VLA 在历史观测 <code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f2f4f6;padding:1px 5px;border-radius:4px;">o_{&lt;t}</code> 与语言指令 <code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f2f4f6;padding:1px 5px;border-radius:4px;">l</code> 的条件下，直接预测未来一段动作 chunk：</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">要说清这个问题，先得把 VLA 的接口写准确。按 survey 的形式化，VLA 在历史观测 <code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f2f4f6;padding:1px 5px;border-radius:4px;">o_{&lt;t}</code> 与语言指令 <code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f2f4f6;padding:1px 5px;border-radius:4px;">l</code> 的条件下，直接预测未来一段动作 chunk：</p>
 <pre style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.7;background:#f7f8f9;border:1px solid #e2e6ea;border-radius:8px;padding:12px 14px;overflow-x:auto;margin:0 0 16px;">a_{t:t+H} = f_VLA(o_{&lt;t}, l)</pre>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个接口非常实用：它把感知、语言、控制塞进一次前向，动作以 chunk 的形式输出，正好对上「一次想一段、执行一段」的机器人控制节奏。但它有一个结构性特点——<strong>候选动作造成什么后果，不是这条公式里的显式中间变量。</strong></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">说「VLA 不能泛化」是不准确的。以语义条件为主的任务切换、物体泛化、指令跟随，VLA 已经能做得相当稳。更具体的问题在这里：<strong>当正确性取决于动作之后的物理演化时，反应式接口缺少一个显式的检查点。</strong>「把杯子推过去」和「不把杯子推倒」在很多场景里是同一个动作方向上的细微差别，而这个差别只在执行之后才显现。</p>
@@ -28,8 +28,8 @@
 <pre style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.7;background:#f7f8f9;border:1px solid #e2e6ea;border-radius:8px;padding:12px 14px;overflow-x:auto;margin:0 0 16px;">z_{t+1} = f_WM(z_t, a_t)</pre>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">在 model-based RL 里，这个预测器用来做「想象」：不需要真的在环境里试，先在模型里推演一段，再据此选动作。这条路线解决的是<strong>试错成本</strong>问题——真机上的每一次失败都要花时间、有时还要修硬件，能先在模型里筛掉明显的坏选择就有价值。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">但经典 world model 的预测通常发生在<strong>状态空间</strong>里，而机器人的观测是像素。于是后来出现了一支把预测放在视觉空间的路线：用视频生成模型预测未来画面，把「世界会怎么演化」表示成一段未来视频。survey 把这类 work 归在 action-conditioned 视频生成与视频世界模型之下，它们为 WAM 提供了最直接的技术前提——<strong>一个能在像素层面推进时间的生成模型。</strong></p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这条路线也有它自己的老问题。学出来的模型必然有偏差，而规划用的是模型的输出而不是真实环境：模型在某个状态上略微乐观，规划器就会反复往那里走，误差在闭环里被放大。survey 在开放挑战里把这一点归到 neural simulator 与闭环策略学习之下——当策略开始专门利用模型的误差时，「预测得准」和「训练出好策略」甚至会互相背离。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">于是 WAM 面对的是一个双重约束：<strong>既要让预测足够准，又不能让预测精度成为动作质量的唯一瓶颈。</strong> 后面几节的所有设计取舍，本质上都是在这两者之间找位置。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这条路线也有它自己的老问题。学出来的模型难免有偏差，而规划用的是模型的输出而不是真实环境：模型在某个状态上略微乐观，规划器就会反复往那里走，误差在闭环里被放大。survey 在开放挑战里把这一点归到 neural simulator 与闭环策略学习之下——当策略开始专门利用模型的误差时，「预测得准」和「训练出好策略」甚至会互相背离。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">于是 WAM 面对的是一个双重约束：<strong>既要让预测足够准，又不能让预测精度成为动作质量的唯一瓶颈。</strong> 后面几节的设计取舍，基本都发生在这两者之间。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">于是问题变成了：既然是预测未来，为什么不直接拿未来的画面当目标？因为画面好看，和机器人能不能做到，是三件不同的事。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">三、但预测得像真的，还不等于机器人做得到</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>编辑部判断：这是整条线里最容易被忽略的一道断层。</strong> 视觉未来的逼真度与机器人动作的可执行性并不是天然等价的——以重建或分布匹配为主要训练目标的模型，未必会把能否执行当作优化对象。</p>
@@ -38,7 +38,7 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这四类的共同点，是它们大多不会直接体现在画面质量上。一个瓶子的未来视频可以在每一帧都逼真，却仍然握不住。视觉上的合理与动作上的可执行，走的是两套标准；把画面做得更真，并不自动把动作变得可行。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">反过来说，把物理约束补进去也不是往损失里加一项就够了。真实接触的建模需要力、摩擦、几何这些机器人数据里往往没有精细标注的量；而长时程可行性更麻烦，它要求模型在几十步之后仍然自洽，这已经超出多数视频模型的预测窗口。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">survey 在评估这一节里给了同方向的表述：生成类指标对基于视频的 WAM 是<strong>必要但不充分</strong>的，视觉保真度无法说明动作接地。另一侧同样成立——轨迹误差小也不保证反馈下的安全。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">所以门槛不只是「预测得准不准」。按本文的编辑部解释，难点在于<strong>预测出来的未来是否被约束到可执行的范围内</strong>——这是本文用来说明问题位置的表述，不是 survey 给出的正式定义。接下来的设计分歧，大多可以从这个角度往回推。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">所以门槛不只是「预测得准不准」。按本文的编辑部解释，难点在于<strong>预测出来的未来是否被约束到可执行的范围内</strong>——这是本文用来说明问题位置的表述，不是 survey 给出的正式定义。设计上的分歧，大多可以从这个角度往回推。</p>
 <img alt="Visual Plausibility 与 Actionability 之间的四道约束" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/004/images/fig3_plausibility_vs_actionability.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 2：左边是「看起来合理」的未来画面，右边是「真的能做」的动作。中间隔着的不是画质，而是物理约束、运动学可达、接触关系与长时程误差累积。图：青稞社区绘制。</em></p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">四、WAM 到底定义了什么</h2>
@@ -60,7 +60,7 @@ WAM:  (o_{t:t+H}, a_{t:t+H}) = f_WAM(o_{&lt;t}, l)</pre>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>Joint Prediction（联合预测）</strong>：未来观测和动作在同一次生成过程里一起出来，两边共享表示。好处是世界信息与动作信息始终对齐，模型不需要先想一段视频、再猜怎么实现；代价是生成开销大，而且视觉预测的误差会顺着共享通路影响动作。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>Inverse Dynamics（逆动力学，plan-then-act）</strong>：先生成未来状态（通常是未来画面），再用一个 inverse dynamics model 从「当前 + 未来」反解出可执行动作。好处是把预测与控制解耦，动作侧能独立优化，也能复用成熟的动作头；代价是多了一段级联误差——<strong>如果想象的未来本身不可达，IDM 只能给出一个勉强的近似，而系统并不会知道自己在将就。</strong></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">两条路线没有共同的分母，因此不能比优劣。它们的差别是<strong>耦合点的位置</strong>：一个耦合在生成过程里，一个耦合在生成之后的动作反解里。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个区别在实际失败模式上会表现得很不一样。联合预测系统出错时，你往往分不清是「想错了」还是「做错了」，因为两者共享同一套表示；plan-then-act 系统出错时，责任更容易定位到某一段——但它多了一个失败面：<strong>反解出来的动作可能与想象的未来并不匹配，而系统没有任何机制发现这件事。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个区别在实际失败模式上会表现得很不一样。联合预测系统出错时，你往往分不清是「想错了」还是「做错了」，因为两者共享同一套表示；plan-then-act 系统出错时，责任更容易定位到某一段——但它多了一个失败面：<strong>反解出来的动作可能与想象的未来并不匹配，而系统没有任何机制能发现这种错位。</strong></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">换句话说，同一句「WAM 效果不错」在两条路线上指的不是同一件事。读结果时需要先确认作者走的是哪一条，再看他们把哪个环节当作瓶颈来优化。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">六、难的一环：Action Interface</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">不管走哪条路线，动作总得被表示成模型能生成的东西。于是出现了一个具体问题：动作到底以什么形式，进入一个原本处理视觉与语言序列的模型？</p>
@@ -72,9 +72,9 @@ WAM:  (o_{t:t+H}, a_{t:t+H}) = f_WAM(o_{&lt;t}, l)</pre>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">七、世界模型和 policy 为什么不一定应该绑死</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">到这里会出现一个自然的想法：既然未来预测这么有用，那就把它和策略焊死在一起。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>编辑部判断：这一步不该无条件迈出。</strong> 两个模块优化的目标本来就不同：world model 想预测得准，policy 想控制得好。预测准在控制上不一定有回报——预测一个与控制无关的细节（桌面纹理、背景行人的移动）对动作没有任何帮助，却会占用模型容量，还会把误差带进共享表示。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">survey 把这件事列成一个开放挑战：world–action factorization，并分成「学习目标解耦」与「学习与推理解耦」两个子方向。换句话说，问题不是要不要 world model，而是<strong>它的表示应该在哪一层、以什么方式影响动作</strong>。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">survey 把它列成一个开放挑战：world–action factorization，并分成「学习目标解耦」与「学习与推理解耦」两个子方向。换句话说，问题不是要不要 world model，而是<strong>它的表示应该在哪一层、以什么方式影响动作</strong>。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这条张力在具体系统上表现得很清楚。GigaWorld-Policy 直接把「以动作为中心」写进方法：学习 2D pixel-action dynamics，视频生成变成可选项——因为论文认为联合建模会把视觉表示与运动表示纠缠在一起，让动作精度反过来依赖未来视频的质量。另一侧，Fast-WAM 与 Faster-WAM 讨论的是同一件事的工程版本，见下一节。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">「纠缠」这个词值得展开一句，因为它说的是一种具体的坏结果。如果视觉预测与动作预测共享同一套表示，那么视频分支上学到的、对控制毫无用处的细节（光线变化、背景运动）会一并进入共享表示，而动作分支的梯度也会去修改那些本来只服务于视觉的通道。结果是<strong>动作精度被一个与控制无关的目标牵着走</strong>。这也是为什么「以动作为中心」会成为一类明确的设计主张，而不仅是工程口味。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">「纠缠」值得展开一句，因为它描述的是一种可能的失败模式，而不是必然结果。当视觉预测与动作预测共享表示时，与控制无关的信号（光线变化、背景运动）有可能进入同一套表示，动作分支的梯度也会作用到原本只服务视觉的通道上，动作精度因此和视觉目标的优化绑在一起。这只是设计张力的一种：是否真的发生，取决于架构与训练配方。但它足以说明，为什么「以动作为中心」会被当成一类明确的设计主张，而不是工程口味。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">八、测试时到底要不要真的想象未来？</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">WAM 最常见的落地形态是 imagine-then-execute：先迭代式地生成一段未来画面，再据此出动作。这条路径的表达能力强，但测试时延很重——视频去噪本来就是多步迭代。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">于是出现了两种不同的取法，方向并不一致。</p>
@@ -84,7 +84,7 @@ WAM:  (o_{t:t+H}, a_{t:t+H}) = f_WAM(o_{&lt;t}, l)</pre>
 <img alt="Future modeling 放在训练期还是延续到推理期" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/004/images/fig4_future_modeling_placement.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 5：横轴是 future representation 的使用位置，不是性能高低。Fast-WAM 与 Faster-WAM 落在这条轴的两侧，两者的实验设置不同，因此这张图只表示「分歧在哪」，不表示谁更优。图：青稞社区绘制，编辑部解释框架。</em></p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">九、数据从哪里来</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">WAM 对数据的依赖比反应式策略更宽，因为「预测未来」这件事本身就需要大量关于世界如何演化的样本。survey 按数据模态与规模整理，本文把它归成三类，每类解决不同的问题。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">WAM 对数据的依赖比反应式策略更宽，因为「预测未来」本身就需要大量关于世界如何演化的样本。survey 按数据模态与规模整理，本文把它归成三类，每类解决不同的问题。</p>
 <img alt="WAM 的策略训练流程：pre-training 与 post-training" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/004/images/survey_training_pipeline.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 6：来源：Lu et al., arXiv:2609.16074v1, Fig. 6（Policy training pipeline for WAMs）。(a) pre-training 用互联网规模视频学习时空与动作表示并做 video–action 对齐；(b) post-training 通过策略微调、数据增强与强化学习把预训练模型适配到具体平台与任务。</em></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>机器人轨迹</strong>提供 action grounding。只有带动作标注的数据才能把「世界变化」与「可执行动作」对应起来，否则模型学到的是视频，不是控制。这类数据的问题一直是规模与采集成本。</p>
@@ -109,13 +109,13 @@ WAM:  (o_{t:t+H}, a_{t:t+H}) = f_WAM(o_{&lt;t}, l)</pre>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>Spatial 与 multi-view consistency</strong>：单视角视频在遮挡与深度上是模糊的，而抓取的成败往往就取决于被遮挡的那几厘米。要把预测做成可用于控制的空间表示，就要处理多视角与 3D 一致性，X-WAM 的 RGB-D 与深度分支正是对这一条的回应。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>Long-horizon memory</strong>：预测窗口越长误差越大，而长程任务又需要长窗口。模型要有办法把「之前发生过什么」带下去，否则每个 chunk 都在重新开始理解场景。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>Neural simulator 与闭环策略学习</strong>：如果预测器足够准，它就能当仿真器用来训练策略；但一旦策略开始利用预测器的误差，闭环里就会出现「策略学会了骗模型」的问题。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>Inference latency 与计算效率</strong>：这是最硬的一条。迭代去噪的时间要与控制频率竞争，第八节的两种取法本质上都是在回答同一个工程问题：<strong>在什么精度下，未来表示值得被算出来。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>Inference latency 与计算效率</strong>：这是最硬的一条。迭代去噪的时间要与控制频率竞争，第八节的两种取法回答的其实是同一个工程问题：<strong>在什么精度下，未来表示值得被算出来。</strong></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把六条放在一起看，会发现它们并不在同一层：action alignment 与 world–action factorization 是建模问题，空间一致性与长时程记忆是表示问题，neural simulator 是训练范式问题，推理时延是部署问题。这些问题分别卡在建模、表示、训练与部署四个层面，也是 WAM 从研究原型走向稳定闭环系统时需要继续处理的部分。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">十二、青稞技术小结</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>WAM 值得关注的地方，不是它比 VLA 更强。</strong> 反应式接口在它擅长的范围内依然高效；WAM 换来的是另一件东西——把动作的后果也纳入决策接口。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">用一句话区分三者：VLA 把动作作为输出，world model 把未来作为预测，WAM 开始把<strong>动作的后果</strong>作为决策的一部分。这也是本文更愿意写成「接口扩展」而不是「代际更替」的原因。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">如果要给一个当下的观察，我会说这条线正卡在两个还没有答案的地方：一是预测得准不等于做得到，二是未来表示该不该延续到推理期。Fast-WAM 与 Faster-WAM 的分歧恰好落在这两个问题上，而且都不像是能在短期内被一次实验解决的。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">对普通读者来说，这条线值得跟的部分也许不是某个系统又涨了几个点，而是它把一个长期被绕开的问题摆到了台面上：<strong>动作的正确性，究竟应该在动作层面判断，还是在后果层面判断。</strong> 反应式接口选择了前者，WAM 选择了后者作为补充。这个选择会决定接下来几年里机器人系统的评测方式——因为一旦承认后果是决策的一部分，「这个策略成功率多少」就不再是唯一值得问的问题。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">对普通读者来说，这条线值得跟的部分也许不是某个系统又涨了几个点，而是它把一个长期被绕开的问题摆到了台面上：<strong>动作的正确性，究竟应该在动作层面判断，还是在后果层面判断。</strong> 反应式接口回答的是前者，WAM 把后者补了进来。这个补充目前还只是候选答案，但它至少让评测变得更难回避：如果承认后果属于决策的一部分，「这个策略成功率多少」就不再是唯一需要报的数字。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">附：与前三篇的关系</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第一篇讨论具身智能三阶段与数据、评测、世界模型等线索；第二篇讨论 VLA 主线的 <strong>action interface</strong>；第三篇讨论 RoboICL 的 <strong>adaptation interface</strong>；这一篇讨论 WAM 的 <strong>prediction / consequence interface</strong>。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">四者是同一技术空间里四个不同的问题维度，不是严格的代际替代关系：动作怎么产生、适配发生在哪、动作的后果如何进入决策，这三件事可以分别推进，也会互相借用实现。</p>
