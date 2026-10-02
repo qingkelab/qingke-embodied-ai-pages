@@ -12,8 +12,8 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">World-Action Models（WAM）这批工作想接上的就是这条通路。<a href="https://arxiv.org/abs/2609.16074" target="_blank" rel="noopener">2026 年 9 月的一篇综述</a>把这个方向整理成了体系：WAM 把「未来世界预测」与「可执行动作生成」耦合在一起，并与经典 world model、model-based RL、action-conditioned 视频生成、以及反应式 VLA 区分开。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">它之所以在 2026 年集中出现，和两个前提同时成熟有关。一是视频生成模型已经能稳定地推进时间轴，于是「把未来画出来」从研究演示变成了可用的组件；二是 VLA 已经铺开到一批真实任务上，让「反应式接口在什么情况下不够用」变成了可以观察的问题。两条线在同一个时间点交汇，就出现了把「预测」接进控制回路的尝试。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">一、VLA 为什么会遇到「动作后果」问题</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">按 survey 的形式化，VLA 在历史观测 <span style="font-family:Georgia,'Times New Roman',serif;font-style:italic;">o<sub>&lt;t</sub></span> 与语言指令 <span style="font-family:Georgia,'Times New Roman',serif;font-style:italic;">l</span> 的条件下，直接预测未来一段动作 chunk：</p>
-<p style="font-size:16.5px;line-height:1.8;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">a<sub>t:t+H</sub> = f<sub>VLA</sub>(o<sub>&lt;t</sub>, l)</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">按 survey 的形式化，VLA 在历史观测 $o_{&lt;t}$ 与语言指令 $l$ 的条件下，直接预测未来一段动作 chunk：</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">$$a_{t:t+H} = f_{VLA}(o_{&lt;t},\ l)$$</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个接口非常实用：它把感知、语言、控制塞进一次前向，动作以 chunk 的形式输出，正好对上「一次想一段、执行一段」的机器人控制节奏。但它有一个结构性特点——<strong>候选动作造成什么后果，不是这条公式里的显式中间变量。</strong></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">说「VLA 不能泛化」是不准确的。以语义条件为主的任务切换、物体泛化、指令跟随，VLA 已经能做得相当稳。更具体的问题在这里：<strong>当正确性取决于动作之后的物理演化时，反应式接口缺少一个显式的检查点。</strong>「把杯子推过去」和「不把杯子推倒」在很多场景里是同一个动作方向上的细微差别，而这个差别只在执行之后才显现。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这不是某一篇论文的缺陷。传统 VLA 的主要接口是 observation / instruction → action，候选动作造成的 future state 通常不是这条接口里的显式中间变量。不同工作的训练目标与数据配方差别很大，不能一概而论。要让「后果」进入决策，就需要模型对「未来」有某种表示——这正是 world model 那一支一直在做的事。</p>
@@ -24,7 +24,7 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 1：三个接口问的是三个不同的问题——现在该做什么、如果这么做世界会怎样、这个未来是否值得真的去做。图：青稞社区绘制。</em></p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">二、World Model 把「未来」带回来</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">World model 不是新概念。survey 把它写成环境动态的预测模型：给定当前状态与动作，预测下一个状态，</p>
-<p style="font-size:16.5px;line-height:1.8;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">z<sub>t+1</sub> = f<sub>WM</sub>(z<sub>t</sub>, a<sub>t</sub>)</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">$$z_{t+1} = f_{WM}(z_t,\ a_t)$$</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">在 model-based RL 里，这个预测器用来做「想象」：不需要真的在环境里试，先在模型里推演一段，再据此选动作。这条路线解决的是<strong>试错成本</strong>问题——真机上的每一次失败都要花时间、有时还要修硬件，能先在模型里筛掉明显的坏选择就有价值。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">但经典 world model 的预测通常发生在<strong>状态空间</strong>里，而机器人的观测是像素。于是后来出现了一支把预测放在视觉空间的路线：用视频生成模型预测未来画面，把「世界会怎么演化」表示成一段未来视频。survey 把这类 work 归在 action-conditioned 视频生成与视频世界模型之下，它们为 WAM 提供了最直接的技术前提——<strong>一个能在像素层面推进时间的生成模型。</strong></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这条路线也有它自己的老问题。学出来的模型难免有偏差，而规划用的是模型的输出而不是真实环境：模型在某个状态上略微乐观，规划器就会反复往那里走，误差在闭环里被放大。survey 在开放挑战里把这一点归到 neural simulator 与闭环策略学习之下——当策略开始专门利用模型的误差时，「预测得准」和「训练出好策略」甚至会互相背离。</p>
@@ -42,9 +42,9 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 2：左边是「看起来合理」的未来画面，右边是「真的能做」的动作。中间隔着的不是画质，而是物理约束、运动学可达、接触关系与长时程误差累积。图：青稞社区绘制。</em></p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">四、WAM 到底定义了什么</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">Survey 给的定义很简洁：把候选动作造成的未来状态与可执行动作一起建模。VLA 输出的是动作：</p>
-<p style="font-size:16.5px;line-height:1.8;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">a<sub>t:t+H</sub> = f<sub>VLA</sub>(o<sub>&lt;t</sub>, l)</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">$$a_{t:t+H} = f_{VLA}(o_{&lt;t},\ l)$$</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">WAM 把未来观测和未来动作一起输出：</p>
-<p style="font-size:16.5px;line-height:1.8;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">(o<sub>t:t+H</sub>, a<sub>t:t+H</sub>) = f<sub>WAM</sub>(o<sub>&lt;t</sub>, l)</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">$$(o_{t:t+H},\ a_{t:t+H}) = f_{WAM}(o_{&lt;t},\ l)$$</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">差别只在等号左边。这个改动看起来小，含义却不小——<strong>动作不再只是输出，未来也不再只是旁路</strong>：模型要在一个共享过程里同时承担「世界会怎样」与「我该怎么动」。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第一，<strong>WAM 是一个范式，不是一个模型。</strong> survey 按表示、transition modeling、动作接口、架构、训练流程、数据模态与扩展策略把它拆成多个维度，覆盖的工作形态差别很大：有的用统一 transformer，有的从预训练视频扩散主干改造，有的把动作塞进视频模型的潜空间。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第二，<strong>这套 taxonomy 是综述作者的归纳，不是领域公认标准。</strong> 本文借用它的分类，但不把它当作权威裁决。</p>
@@ -94,6 +94,7 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 7：来源：Lu et al., arXiv:2609.16074v1, Fig. 7（Data modality and scaling structure for World-Action Models）。左侧列出语言条件、多视角视频、3D 几何、接触与听觉、本体状态这几类模态各自暴露的、与动作相关的状态变量；右侧是数据金字塔，机器人轨迹位于上方（小而精确、提供 action grounding），人类第一视角与互联网视频依次向下（规模更大、提供先验与世界动态）。</em></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">人类视频与互联网视频的规模远大于机器人数据，但它们没有动作标签；把它们用起来的办法，是<strong>先学一个动作表示，再让视频去对齐这个表示</strong>。数据侧的全部收益，最终都压在这一层表示的质量上——这也是 survey 把 action alignment 放在开放挑战第一条的原因。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">还有一条现实约束：三类数据的分布并不相同。互联网视频里的物理事件（挤压、倾倒、碰撞）大多不在机器人任务分布内，而机器人轨迹又集中在少数场景。把它们混在一起训练，需要一套按数据质量分配角色的机制，LDA-1B 里「给不同质量的数据分配不同角色」就是这个问题的回应。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>把这一节当路线选择表用，先数清手上哪一类数据最多。</strong> 机器人轨迹占多数，要先解决 action grounding，走需要动作标签的路线；人类第一视角视频占多数，潜动作那一层是绕不开的中间件；手上只有互联网视频，则更接近把视频先验直接接进策略的那条路。三类数据的角色不可互换，这件事决定的不只是数据工艺，而是技术路线。这是本文对 survey 数据分类的工程读法。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">十、WAM 怎么评价</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">评价这件事，在这个方向上最容易被误读。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>只写成功率不够，只写视频质量更不够。</strong> survey 把指标族分得很细：任务级指标（SR、route completion、driving score、episode return、chain length）最接近最终控制目标；轨迹指标（ADE/FDE、NE、SPL、nDTW、ATE、RPE）衡量路径与位姿一致性；生成指标（FID、FVD、LPIPS、PSNR、SSIM）衡量视觉保真度；此外还有语义与占用类指标，以及时延、碰撞、舒适度这类部署约束指标。</p>

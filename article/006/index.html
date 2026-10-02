@@ -61,6 +61,7 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">token 与成本这两列几乎同步变化，说明成本主要由 token 用量驱动；论文也说明费率取的是 Standard API 价格，并且把缓存命中的折扣算了进去。这意味着换一个更便宜的模型、或者用上批量与缓存策略，成本结构会整体平移——<strong>但论文报告的是这套默认配置下的账。</strong></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">掷土豆那一行还揭示了一个口径问题。论文说明投掷动作平均在任务下发 <strong>13.9 分钟</strong>后完成，之后对轨迹的分析与验证<strong>约占所报 22.8 分钟的 40%</strong>。也就是说，这张表里的「22.8 分钟」有接近一半不是机器人在动，而是 agent 在复盘自己的动作。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">还有一处更隐蔽的口径要留意：<strong>耗时与成本只统计成功试次</strong>，失败试次的开销没有进表。四对装配是 4/5，也就是说有一次失败的账没有算进 54.3 分钟与 27.41 美元里；折毛巾同步版是 3/5，有两次未计入。这样一来，更该问的问题是<strong>「一次成功多少钱」</strong>：把失败摊进去之后，单位成功成本会比表里更高，高多少取决于失败试次跑了多久才被判失败，而这一项论文没有给。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>对准备复现这条路线的人，上面两个口径会改变预算的算法。</strong> 表里的 27.41 美元是成功试次的账；真要备算力，得按「一次成功多少钱」来算，而失败试次跑了多久才被判失败、这部分开销多大，论文没有给——这一段只能自己测。换句话说，这张成本表给出的是下限，不是预算单。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>编辑部判断</strong>：这条路线把「能力」和「成本」分得很开——成功率那一侧看着接近可用，成本这一侧离部署还很远。论文自己也没有回避：结论一节把执行时间、推理成本与协同可变形操作的可靠性并列为仍需解决的问题。</p>
 <img alt="成本口径：时间花在哪一段" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/006/images/fig3_cost_breakdown.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 3：以掷土豆为例说明时间口径。所报 22.8 分钟里，投掷动作在任务下发 13.9 分钟后完成，其后的轨迹分析与验证约占四成。本图只解释口径构成，不比较任务之间的好坏。图：青稞社区绘制。</em></p>
