@@ -77,7 +77,7 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">为什么可以拆？关键在「条件」与「生成」是两件可以分开的事。§二 提到，把动作写进语言 token 空间会带来离散粒度、序列长度与解码效率之间的耦合；而「理解看到什么、要做什么」与「在该条件下生成连续动作」并不需要由同一个结构承担。保留视觉语言部分作条件来源，把动作生成交给专门输出连续动作的模块，就绕开了那组耦合。<strong>依据是这两件事可以解耦，不是哪个模块更先进。</strong></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">结构上发生的是这样一件事：<strong>在一部分代表性工作里</strong>，VLA 的核心开始从「action 作为语言 token」转向「视觉语言条件 + 专门的动作生成器」。视觉语言部分负责理解与条件化，动作部分作为一个可以单独设计的子模块存在。<strong>这不是换一个动作头，而是把动作生成拆成了独立子系统。</strong></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这类工作仍属本文范围：本文处理的是<strong>「视觉语言条件 + 机器人动作」这个问题</strong>，而不是某一种动作实现——动作模块不用语言 token，改变的是解法，问题本身没有变。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">但同样不要把这一步写成淘汰。<strong>FAST 与 FASTer 的存在正好是反例</strong>：它们继续在自回归路线内部改进动作 tokenization，并报告在推理速度与任务性能上同时超过此前的自回归 VLA。离散 token 路线与连续动作模块不是先后关系，而是并行展开的两条支线——这一点在第一篇里已经出现过，在这里它改变的是「VLA 有几个技术方案」这个问题。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">但同样不要把这一步写成淘汰。<strong>FAST 与 FASTer 的存在正好是反例</strong>：它们继续在自回归路线内部改进动作 tokenization，并报告在推理速度与任务性能上同时超过此前的自回归 VLA。离散 token 路线与连续动作模块是并行展开的两条支线，在这里它改变的是「VLA 有几个技术方案」这个问题。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把 π0 的意义压缩成一句话：<strong>它说明了「视觉语言理解」与「动作生成」可以由不同的结构承担，两者之间用条件关系连接，而不是共用一套输出表示。</strong> 这听起来只是架构细节，但它改变了一部分后续工作的提问方式：如果说 RT-2 那一侧的问题是「怎么把动作写进语言模型」，在这些工作里，问题变成了「动作生成应该由什么结构承担，它需要哪些条件输入」——问题对象从表示形式移到了模块划分。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里也是全文最容易写过头的地方。<strong>「动作模块化」是部分代表性工作出现的一次架构分叉，不是一次全行业转向。</strong> 同一时期有工作继续在自回归路线里改进动作 tokenization（FAST / FASTer），也有工作走连续动作加并行回归（OpenVLA-OFT），还有工作尝试把动作生成放到 latent 空间（§八）。这条线上没有「π0 之后大家都开始……」这回事——不同取法在不同的约束下各自成立。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">八、2025–2026：VLA 开始越过 VLA</h2>
@@ -103,9 +103,6 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第三，VLA 与 Robot Foundation Model 缺少公认边界。</strong> 当一批工作分别自称 VLA、WAM、EFM、reasoner 时，「谁属于这条主线」就不是一个可以靠名字回答的问题，而需要一套可判定的判据。这套判据目前不存在。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">最后把「主线」这个词收口。本文说的是<strong>问题主线</strong>——视觉与语言条件 → 动作接口 → 多任务与跨本体 → action representation → action module → reasoning / world-action / continual adaptation；它不是<strong>模型主线</strong>。这条线上不存在「模型 A 是模型 B 的前身」这种关系：RT-2 的命名被继承，Octo 走的是另一条 generalist policy 路线，π0 换掉了动作侧的承担者，2026 年那批工作则把问题拆到了更细的层。<strong>把这条线读成一条替代链，会同时误读每一环。</strong></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>把这份清单落到工程上，读法会换一个方向。</strong> 既然 action representation 的单变量对照仍然缺失，选型就只能看延迟、微调成本与硬件支持，不靠某一篇论文里的分数；既然跨本体数据的「有效规模」没有统一单位，数据预算就得按自己的本体与任务重新算一遍，不能直接引用别家的轨迹数或小时数；既然 VLA 与 Robot Foundation Model 还没有公认边界，读一篇新工作时先确认它改的是哪一层接口，再看它自称什么。这三句是本文对上面证据的读法，不是给行业的建议。</p>
-<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">与第一篇的边界</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第一篇是全景：三阶段范式转移、数据分布、动作表示、评测、World Model 与人形。本文只做 VLA 这一条线：它为什么出现、接口问题被反复重述成什么、分叉发生在哪里、哪些问题仍没有答案——<strong>不再重复第一篇的评测框架、数据 scaling 与人形两条支线</strong>。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">两篇共用的来源主要在动作表示与评测两处，但切入角度不同：第一篇问「三年里讨论重心移动到了哪里」，本文问「VLA 这条线自己的问题是什么」。<strong>如果只能读一篇：想看全景读第一篇，想看 VLA 的技术主线读本文。</strong></p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">主要来源</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">本文数字与结论均来自以下工作。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>主线模型</strong></p>
