@@ -2,16 +2,16 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>给 VLA 套一层 agent harness，能补上哪些泛化缺口？——<a href="https://github.com/RLinf/RPent" target="_blank" rel="noopener">RPent</a> 与 <a href="https://arxiv.org/abs/2607.08448" target="_blank" rel="noopener">Harness VLA</a> 技术解读</title>
+<title>给 VLA 套一层 agent harness，能补上哪些泛化缺口？——RPent 与 Harness VLA 技术解读</title>
 </head>
 <body style="font-family:-apple-system,'PingFang SC','Heiti SC',sans-serif;color:#14161a;max-width:720px;margin:0 auto;padding:24px;background:#ffffff;">
 <h1 style="font-size:23px;font-weight:600;line-height:1.4;margin:0 0 22px;">给 VLA 套一层 agent harness，能补上哪些泛化缺口？——RPent 与 Harness VLA 技术解读</h1>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">开场：动作对了，但对着错的东西</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">机械臂把红色积木夹起来，移向盒子上方，姿态、速度、夹持力都符合示范的样子。松手之后积木落在盒外——因为这一轮的目标标记被换到了另一个盒子上，而模型仍然按上一轮的绑定执行。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这类失败和「抓不住」不是一回事。抓取动作本身没有问题，问题出在动作所对准的目标、所在的空间布局、或者所处的任务阶段。2025 年 10 月提出的 <a href="https://arxiv.org/abs/2510.03827" target="_blank" rel="noopener">LIBERO-PRO</a> 评测专门构造这类扰动，用来检查模型是在完成任务，还是在重复记忆里的轨迹。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">Harness VLA 这篇 2026 年 7 月的论文用一个数字说明这个缺口有多大：同一条 VLA，即 RLinf 版本的 π 模型（下称 π_RLinf），在标准 <a href="https://arxiv.org/abs/2306.03310" target="_blank" rel="noopener">LIBERO</a> 上成功率 95.3%，到了 LIBERO-PRO 的扰动设置下掉到 50.0%。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><a href="https://arxiv.org/abs/2607.08448" target="_blank" rel="noopener">Harness VLA</a> 这篇 2026 年 7 月的论文用一个数字说明这个缺口有多大：同一条 VLA，即 RLinf 版本的 π 模型（下称 π_RLinf），在标准 <a href="https://arxiv.org/abs/2306.03310" target="_blank" rel="noopener">LIBERO</a> 上成功率 95.3%，到了 LIBERO-PRO 的扰动设置下掉到 50.0%。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这篇文章要回答的是一个比「怎么把 VLA 训得更好」更窄的问题：<strong>当一个模型的动作能力已经足够，失败发生在动作被组织的方式上时，系统里应该多出哪一层？</strong></p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">要回答它，我们需要先看清楚标准接口的假设、扰动型评测暴露了哪几类失败，再来看一个把「谁决定下一步做什么」单独拎出来的系统——RPent，以及它上线的第一项工作 Harness VLA。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">要回答它，我们需要先看清楚标准接口的假设、扰动型评测暴露了哪几类失败，再来看一个把「谁决定下一步做什么」单独拎出来的系统——<a href="https://github.com/RLinf/RPent" target="_blank" rel="noopener">RPent</a>，以及它上线的第一项工作 Harness VLA。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">一、过去怎么做：把泛化写进参数</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">要看清 RPent 改了什么，先把主流做法的接口写准确。端到端 VLA 的接口是「看当前观测与指令，输出接下来一段动作」：视觉、语言条件与动作学习在同一个训练框架里联合优化，模型从像素一路算到电机指令。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这条路线在过去三年很成功，它的假设也很清楚：<strong>只要训练数据覆盖到足够多的任务、物体、场景与本体，模型在部署时就能泛化。</strong> 泛化的来源是数据分布，实现方式是参数。</p>
@@ -110,9 +110,7 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">它同时也给这条路线划出了两条边界。第一条是<strong>证据边界</strong>：目前的收益全部建立在仿真扰动评测上，真机与接触层的扰动尚未验证，记忆的贡献也没有独立归因。第二条是<strong>成本边界</strong>：把成功率从 72% 推到 92% 的代价是每回合从一分钟变成七分钟、并引入百万级 token；这个量级离连续部署还有距离。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">如果要从这里挑一个值得长期观察的变量，我会选「单位成功率的开销」——因为它决定了这一类 harness 是停留在评测台架上，还是能走进真实系统。成功率会随 planner 迭代继续上涨，但只有成本下降一个量级，这条路线才会从「跑分手段」变成「部署方式」。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">最后一句话留给工程视角。这套框架里最不像论文的部分，是它把「可靠的适用条件」当成了需要长期维护的资产：记忆要审核、要版本化、要区分只读与可写。对做部署的团队来说，这可能是比 92.63% 更值得抄走的一个设计决定——<strong>模型会换代，工具会增删，但「什么情况下该信这个工具」这件事，永远需要有人维护。</strong></p>
-<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">附：与前三篇的关系</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第一篇讨论具身智能三阶段与数据、评测、世界模型等线索；第二篇讨论 VLA 主线的 <strong>action interface</strong>；第三篇讨论 RoboICL 的 <strong>adaptation interface</strong>；第四篇讨论 WAM 的 <strong>prediction / consequence interface</strong>。这一篇讨论 harness 的 <strong>execution-organization interface</strong>：在一次任务里，由谁决定下一步调用什么。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">五者不是代际替代关系。动作怎么产生、适配发生在哪、后果如何进入决策、执行由谁组织，这四件事可以分别推进，也会互相借用实现——README 把世界模型列为待接入的原语，就是一个具体例子。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">按本文的读法，harness 这一层挪动的是 <strong>execution-organization interface</strong>：在一次任务里，由谁决定下一步调用什么。它改变的不是模型能力，而是能力的组织方式。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">来源</h2>
 <ul style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;"><li>Harness VLA 论文：<a href="https://arxiv.org/abs/2607.08448" target="_blank" rel="noopener">https://arxiv.org/abs/2607.08448</a>（项目页：<a href="https://harnessvla.github.io/" target="_blank" rel="noopener">https://harnessvla.github.io/</a>）</li><li>RPent 官方仓库：<a href="https://github.com/RLinf/RPent" target="_blank" rel="noopener">https://github.com/RLinf/RPent</a></li><li>RPent 官方文档：<a href="https://rpent.readthedocs.io/en/latest/" target="_blank" rel="noopener">https://rpent.readthedocs.io/en/latest/</a></li><li>RPent 排行榜（性能）：<a href="https://rpent.readthedocs.io/en/latest/rst_source/leaderboard/performance.html" target="_blank" rel="noopener">https://rpent.readthedocs.io/en/latest/rst_source/leaderboard/performance.html</a></li><li>RPent 排行榜（时间与 token）：<a href="https://rpent.readthedocs.io/en/latest/rst_source/leaderboard/time-token-costs.html" target="_blank" rel="noopener">https://rpent.readthedocs.io/en/latest/rst_source/leaderboard/time-token-costs.html</a></li><li>LIBERO-PRO：<a href="https://arxiv.org/abs/2510.03827" target="_blank" rel="noopener">https://arxiv.org/abs/2510.03827</a></li><li>RoboCasa365：<a href="https://arxiv.org/abs/2603.04356" target="_blank" rel="noopener">https://arxiv.org/abs/2603.04356</a></li><li>RLDX-1 Technical Report：<a href="https://arxiv.org/abs/2605.03269" target="_blank" rel="noopener">https://arxiv.org/abs/2605.03269</a></li></ul>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>图片出处</strong>：图 1、图 2、图 3 均为青稞社区绘制。</p>
