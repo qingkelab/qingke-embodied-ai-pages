@@ -28,7 +28,7 @@
 <img alt="三类部署期失败与 harness 的介入点" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/005/images/fig3_failure_modes.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 3：三类失败的共同点是动作层面看不出来、结果层面才暴露。图中不包含任何成功率或排名，只标出每类失败各自的介入点：planner 按当前观测重绑定目标、检查执行反馈后再分段、先摆位再让 VLA 定向重试。图：青稞社区绘制，编辑部解释框架。</em></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把三类放在一起看，会发现它们<strong>不是「模型不够强」的同一种表现</strong>。第一类和第二类本质上需要「重新确认一次现在是什么情况」，第三类需要「换一个初始条件再试一次」。而标准 VLA 接口 <code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f2f4f6;padding:1px 5px;border-radius:4px;">观测 + 指令 → 动作</code> 里，没有给这两件事留位置。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>编辑部判断</strong>：这也是为什么单纯把 VLA 做得更大，不一定会解决这三类失败——它们缺的不是局部动作能力，而是动作之间的组织与判断。这个判断只在本文讨论的扰动型评测设定下成立，不等价于「扩大数据规模没有用」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>单纯把 VLA 做得更大，不一定能解决这三类失败</strong>——它们缺的不是局部动作能力，而是动作之间的组织与判断。这个判断只在本文讨论的扰动型评测设定下成立，不等价于「扩大数据规模没有用」。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">三、新工作改哪一层：把 VLA 降级成一个可重试的工具</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">Harness VLA 的核心动作只有一句话：<strong>把冻结的 VLA 变成一个可以被反复调用、也可以被放弃重试的接触密集操作原语，把「这一步该做什么」交给一个 agent 形式的 planner。</strong></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文与官方文档反复强调两条约束：全程不更新 VLA 的权重，也不在部署期扩张原语库。改动全部发生在执行组织层：</p>
@@ -37,7 +37,7 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第二行的「重新摆位」值得单独说。传统重试是把同一个动作再执行一遍，但接触类失败往往是因为初始状态不好；先做一次非接触的位姿调整，再让 VLA 出手，成功率会明显不同。这个动作在接口上是 planner 的调度决策，不是 VLA 的能力。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">「工具」在这里不是比喻。按官方文档的系统描述，VLA 原语与脚本化工具注册在同一张工具表上，每个工具都有名字、描述与参数 schema，调用后必须返回结构化结果，planner 看到的是一份统一的调用清单，不需要知道背后是神经网络还是几何计算。这个「不区分」正是降级的含义：<strong>VLA 的输出不再直接驱动控制循环，而是成为 planner 的一次可供评估、也可以被放弃的尝试。</strong></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">代价也随之出现。一次 VLA 调用变成一次完整的工具调用，中间多了判断、序列化与失败分类；这部分开销在第八节有具体量级。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>编辑部判断</strong>：这条路线最容易被误读成「用 LLM 做任务规划」——那是更早就有的一类思路。本文更愿意把它看成两件事的组合：一是<strong>接口改动</strong>（VLA 从策略降级为工具），二是<strong>工程资产的沉淀方式</strong>（把「什么条件下这个工具可靠」写成可复用的记忆）。后一件是这套系统新增的部分。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这条路线最容易被误读成「用 LLM 做任务规划」——那是更早就有的一类思路。<strong>本文更愿意把它看成两件事的组合</strong>：一是<strong>接口改动</strong>（VLA 从策略降级为工具），二是<strong>工程资产的沉淀方式</strong>（把「什么条件下这个工具可靠」写成可复用的记忆）。后一件是这套系统新增的部分。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">四、系统结构：三个进程与一张工具表</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">RPent 把一次运行拆成三个角色，各有明确边界：</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>Agentic Planner</strong> 是一个 coding agent 形式的规划器，负责解释任务、读 RGB-D 观测、重绑定目标与区域、检查执行反馈、选择与排序原语。它看到的不只是任务描述，还包括上一次工具调用返回的文本与图像。</p>
@@ -68,7 +68,7 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这说明收益不是「模型变强了」，而是「在目标绑定与空间布局被改动时不再掉线」。如果只看标准 suite，很容易得出「加一层 harness 没什么用」的结论；如果只看扰动评测，又容易高估它的能力。两个数字要放在一起读。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">读这四组数字时还需要做三次口径对齐。其一，每一行的对照方法都与它写在同一张表里，<strong>跨表不并列</strong>；其二，harness 侧调用的是各自环境的 VLA 原语（LIBERO 侧 π_RLinf、RoboCasa 侧 RLDX-1、RoboTwin 侧 LingBot-VLA），所以每行的提升都是相对「同环境的 VLA 基线」，不是相对某个统一模型；其三，官方文档没有给出这些结果的随机种子与独立运行次数，重复性目前只能依赖仓库中为复现准备的环境分支。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文摘要在总结提升幅度时用了另一个口径：<strong>相对最强相关基线，LIBERO-Pro 提升 38.6 个百分点、RoboCasa365 提升 25.4 个百分点，并在 RoboTwin C2R 达到 58.4%。</strong> 后一个数字可以直接对上（55.4% − 30.0% = 25.4），但前一个需要读者自己反推——82.4% 减 38.6 得到 43.8%，也就是 RATS 的分数，而不是同一张表里更高的 π_RLinf（50.0%）。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>编辑部指出的口径问题</strong>：摘要没有逐条点名这条基线是谁，而按官方文档的表格，同环境上 π_RLinf 的 50.0% 高于 RATS 的 43.8%。以不同基线计算，提升幅度会分别是 38.6 与 32.4 个百分点。这很可能是把同项目 VLA 视为对照条件而非竞争方法所致，但一手来源没有写明理由。<strong>本文的处理方式是两个数字都写、都保留来源，不替论文选基线。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里有一处口径问题需要我们自己指出：摘要没有逐条点名这条基线是谁，而按官方文档的表格，同环境上 π_RLinf 的 50.0% 高于 RATS 的 43.8%。以不同基线计算，提升幅度会分别是 38.6 与 32.4 个百分点。这很可能是把同项目 VLA 视为对照条件而非竞争方法所致，但一手来源没有写明理由。<strong>本文的处理方式是两个数字都写、都保留来源，不替论文选基线。</strong></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">官方文档把增益归为三条机制：planner 的语义重绑定、重新摆位之后稀疏而定向的 VLA 重试、以及用解析原语隔离非接触执行。这三条都是机制描述，论文没有给出逐项的独立消融。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">七、2026 年 9 月的官方榜单：同一个 harness，换 planner 差十个点</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">2026 年 9 月，官方上线了一个交互式排行榜，覆盖 LIBERO-PRO、LIBERO、RoboCasa365 Target50 与 RoboTwin 四组环境，并把「同一个 harness 换不同 planner 与模型」直接做成了可比较的行。LIBERO-PRO 上排在最前的几行是：</p>
@@ -86,7 +86,7 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把这些数字换算成直观的量级：LIBERO-PRO 上每个回合平均要跑将近七分钟、消耗三百多万个输出 token；RoboCasa365 上平均每回合接近二十分钟。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">同一页面上还有一行很说明问题的数据：Flash Mode 用 Molmo2-8B 做视觉定位，每回合 60.19 秒、token 计数为 0，成功率 72.63%。<strong>这条线上「成功率」和「开销」是一组可以调档的取舍，而不是单一最优解。</strong> 从 72.63% 到 92.63% 的这 20 个百分点，代价是每回合从一分钟变成七分钟、并引入百万级 token 消耗。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">README 还记录了一条工程侧的更新：2026 年 8 月加入非推理模式，官方称平均执行时间降低约 40%（未给出测量口径）。这说明这条线自己也在往成本方向优化，只是目前的公开数字仍停留在分钟量级。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>编辑部判断：</strong> 这类开销在离线评测里可以接受，在连续运行的部署场景里则是硬约束。本文把成本单列一节，是因为它比成功率更容易在讨论中被略过；但也要说清——排行榜没有公布时延的测量口径（是否含服务冷启动、模型下载等），因此这些数字只能作为量级参考。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>本文认为，这类开销在离线评测里可以接受，在连续运行的部署场景里则是硬约束。</strong> 把成本单列一节，是因为它比成功率更容易在讨论中被略过；但也要说清——排行榜没有公布时延的测量口径（是否含服务冷启动、模型下载等），因此这些数字只能作为量级参考。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里还有一处需要读者自己补上的空白：<strong>官方没有给出耗时的分解。</strong> 一个 412 秒的回合里，多少花在模型推理、多少花在仿真步进、多少花在图片编码与传输，决定了优化应该往哪一层做。非推理模式能省掉约 40% 的说法，从侧面说明推理环节占了相当比例，但具体结构仍然不明。对准备复现这套系统的人来说，这比成功率更影响可行性判断。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">九、与相邻路线比较</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把这条线放进 2026 年具身智能的几个接口里横向读：</p>
@@ -114,6 +114,6 @@
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">来源</h2>
 <ul style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;"><li>Harness VLA 论文：<a href="https://arxiv.org/abs/2607.08448" target="_blank" rel="noopener">https://arxiv.org/abs/2607.08448</a>（项目页：<a href="https://harnessvla.github.io/" target="_blank" rel="noopener">https://harnessvla.github.io/</a>）</li><li>RPent 官方仓库：<a href="https://github.com/RLinf/RPent" target="_blank" rel="noopener">https://github.com/RLinf/RPent</a></li><li>RPent 官方文档：<a href="https://rpent.readthedocs.io/en/latest/" target="_blank" rel="noopener">https://rpent.readthedocs.io/en/latest/</a></li><li>RPent 排行榜（性能）：<a href="https://rpent.readthedocs.io/en/latest/rst_source/leaderboard/performance.html" target="_blank" rel="noopener">https://rpent.readthedocs.io/en/latest/rst_source/leaderboard/performance.html</a></li><li>RPent 排行榜（时间与 token）：<a href="https://rpent.readthedocs.io/en/latest/rst_source/leaderboard/time-token-costs.html" target="_blank" rel="noopener">https://rpent.readthedocs.io/en/latest/rst_source/leaderboard/time-token-costs.html</a></li><li>LIBERO-PRO：<a href="https://arxiv.org/abs/2510.03827" target="_blank" rel="noopener">https://arxiv.org/abs/2510.03827</a></li><li>RoboCasa365：<a href="https://arxiv.org/abs/2603.04356" target="_blank" rel="noopener">https://arxiv.org/abs/2603.04356</a></li><li>RLDX-1 Technical Report：<a href="https://arxiv.org/abs/2605.03269" target="_blank" rel="noopener">https://arxiv.org/abs/2605.03269</a></li></ul>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>图片出处</strong>：图 1、图 2、图 3 均为青稞社区绘制。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">本文所有数字均可追溯到对应来源的原文位置；判断部分为编辑部观点，已在文中逐处标注。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">本文所有数字均可追溯到对应来源的原文位置；判断部分以第一人称和句式标注归属，未带判断语气的句子均为来源事实。</p>
 </body>
 </html>
