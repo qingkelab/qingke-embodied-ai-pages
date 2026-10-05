@@ -6,6 +6,7 @@
 </head>
 <body style="font-family:-apple-system,'PingFang SC','Heiti SC',sans-serif;color:#14161a;max-width:720px;margin:0 auto;padding:24px;background:#ffffff;">
 <h1 style="font-size:23px;font-weight:600;line-height:1.4;margin:0 0 22px;">机器人为什么开始预测自己的动作后果？——World-Action Models（WAM）技术解读</h1>
+<img alt="文章封面" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/004/images/cover_notebook.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">开场：一个动作看起来正确，不代表它的后果正确</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">机械臂把夹爪移到杯子上方，姿态、位置、速度都符合示范里的样子。松手之后杯子倒了——动作本身没有超出允许范围，但它带来的世界状态不是想要的。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">在多数 VLA 系统里，这类失败不容易被模型自己发现。它们的接口是「看当前观测与指令，输出接下来一段动作」——动作是否合理由训练分布与执行层约束决定，而「这么做之后世界会变成什么样、那个样子是否可以接受」并不是这个接口里的显式环节。</p>
@@ -94,6 +95,7 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 7：来源：Lu et al., arXiv:2609.16074v1, Fig. 7（Data modality and scaling structure for World-Action Models）。左侧列出语言条件、多视角视频、3D 几何、接触与听觉、本体状态这几类模态各自暴露的、与动作相关的状态变量；右侧是数据金字塔，机器人轨迹位于上方（小而精确、提供 action grounding），人类第一视角与互联网视频依次向下（规模更大、提供先验与世界动态）。</em></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">人类视频与互联网视频的规模远大于机器人数据，但它们没有动作标签；把它们用起来的办法，是<strong>先学一个动作表示，再让视频去对齐这个表示</strong>。数据侧的全部收益，最终都压在这一层表示的质量上——这也是 survey 把 action alignment 放在开放挑战第一条的原因。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">还有一条现实约束：三类数据的分布并不相同。互联网视频里的物理事件（挤压、倾倒、碰撞）大多不在机器人任务分布内，而机器人轨迹又集中在少数场景。把它们混在一起训练，需要一套按数据质量分配角色的机制，LDA-1B 里「给不同质量的数据分配不同角色」就是这个问题的回应。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>把这一节当路线选择表用，先数清手上哪一类数据最多。</strong> 机器人轨迹占多数，要先解决 action grounding，走需要动作标签的路线；人类第一视角视频占多数，潜动作那一层是绕不开的中间件；手上只有互联网视频，则更接近把视频先验直接接进策略的那条路。三类数据的角色不可互换，这件事决定的不只是数据工艺，而是技术路线。这是本文对 survey 数据分类的工程读法。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">十、WAM 怎么评价</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">评价这件事，在这个方向上最容易被误读。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>只写成功率不够，只写视频质量更不够。</strong> survey 把指标族分得很细：任务级指标（SR、route completion、driving score、episode return、chain length）最接近最终控制目标；轨迹指标（ADE/FDE、NE、SPL、nDTW、ATE、RPE）衡量路径与位姿一致性；生成指标（FID、FVD、LPIPS、PSNR、SSIM）衡量视觉保真度；此外还有语义与占用类指标，以及时延、碰撞、舒适度这类部署约束指标。</p>
