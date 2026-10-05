@@ -6,6 +6,7 @@
 </head>
 <body style="font-family:-apple-system,'PingFang SC','Heiti SC',sans-serif;color:#14161a;max-width:720px;margin:0 auto;padding:24px;background:#ffffff;">
 <h1 style="font-size:23px;font-weight:600;line-height:1.4;margin:0 0 22px;">从 π0 到 π0.7：VLA 的技术演进与变化趋势</h1>
+<img alt="文章封面" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/009/images/cover_notebook.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">开场：一次被同一批作者推翻的设计</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">2024 年 10 月，Physical Intelligence 发布 π0：在预训练视觉语言模型之上<strong>挂一个独立的动作专家</strong>，用 flow matching 生成连续的机器人动作。这个设计后来被大量工作沿用，「VLM 主干 + 动作专家」几乎成了 VLA 的默认写法。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">五个月后，同一批作者发了一篇论文，标题写得很直白：<em>Knowledge Insulating Vision-Language-Action Models: Train Fast, Run Fast, Generalize Better</em>。它的结论是：<strong>朴素地把连续动作专家接进 VLM，会显著损害训练速度，也会损害预训练语义知识的迁移。</strong></p>
@@ -61,7 +62,7 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">值得注意的是这条线的证据形态：论文在仿真里用 12 个高动态任务、在真机上用 6 个双臂任务来验证对延迟的鲁棒性。这种「针对某个工程约束单独设计一组评测」的做法，在具身方向并不常见，但它也意味着这些结果的适用面，被限定在论文选择的延迟区间与任务类型之内。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">六、π*0.6：当演示不再是唯一的学习信号</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">前面几篇的共同前提是：从演示里学。模仿学习的天花板也在这里——<strong>策略通常不会超过演示它的那位</strong>，而演示的采集成本又极高。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">π<em>0.6 想换掉这个前提。论文提出 RECAP，把三类数据放进同一个训练回路：<strong>演示数据、模型自己执行时采集的数据（on-policy）、以及自主执行过程中人类介入的纠正</strong>。方法上它用了优势条件化（advantage conditioning），先做离线强化学习预训练得到 π</em>0.6，再在具体任务上收集真机数据做专精。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">π*0.6 想换掉这个前提。论文提出 RECAP，把三类数据放进同一个训练回路：<strong>演示数据、模型自己执行时采集的数据（on-policy）、以及自主执行过程中人类介入的纠正</strong>。方法上它用了优势条件化（advantage conditioning），先做离线强化学习预训练得到 π*0.6，再在具体任务上收集真机数据做专精。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文报告的结果是：在部分最难的任务上，用完整 RECAP 训练的模型可以把任务吞吐<strong>提升超过一倍</strong>，同时把失败率<strong>降低大约一半</strong>；评估场景包括真实家庭里的折衣服、可靠地装盒，以及用专业咖啡机做浓缩咖啡。这些数字都是作者自报、也只适用于本文的任务集合。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里值得注意的方向性变化是：<strong>训练信号从「别人怎么做」扩展到了「自己试错的结果 + 人的即时纠正」。</strong> 这条路线的代价同样清楚——在真实世界里收集数据、判断好坏、并保证训练稳定，每一项都比离线喂演示麻烦。</p>
 <img alt="训练信号的三次扩展" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/009/images/fig3_training_signals.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
