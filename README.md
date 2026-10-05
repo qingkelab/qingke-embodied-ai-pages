@@ -23,6 +23,23 @@ article/003/                  预留
 - 每篇文章放在 `article/<三位序号>/index.html`，正文用自包含的内联样式，便于单独打开与后续迁移。
 - 新增文章后在根 `index.html` 加一张卡片。
 
+## 新增文章的同步流程
+
+本仓库是**公开发布仓库**，只承载发布产物。私有研究仓库（`qingkelab/qingke-embodied-ai`）里
+一篇文章进入 `release/<article-dir>/article-final.html` 之后，必须同步到本仓库：
+
+1. 建立 `article/<三位序号>/index.html`，内容**直接取自**私有仓库的 `release/<article-dir>/article-final.html`，
+   **不允许重新改写正文**（应为逐字节一致）。
+2. 有发布图片时，图片放 `article/<三位序号>/images/`，正文中的图片 URL 写成
+   `https://qingkelab.github.io/qingke-embodied-ai-pages/article/<序号>/images/<file>.png`。
+3. 在根 `index.html` 增加该文章的入口卡片。
+4. 走**独立 branch → PR → merge**，不直接 push `main`，不 force push。
+5. 合并后验证：页面存在、与私有 release HTML 内容一致、首页有入口、图片路径可访问、
+   Pages URL 可访问、上一篇文章未被改动。
+
+**禁止同步**：`drafts`、`briefs`、`sources`、`fact-check`、`editorial-notes`、`issues`、
+SVG 源文件及其他研究内部材料。本仓库只放 HTML、发布图片与必要的站点静态文件。
+
 ## 部署
 
 推送到 `main` 即触发 `.github/workflows/pages.yml`，使用 GitHub 官方 Pages actions 发布整个仓库根目录。
