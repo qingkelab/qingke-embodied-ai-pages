@@ -6,6 +6,7 @@
 </head>
 <body style="font-family:-apple-system,'PingFang SC','Heiti SC',sans-serif;color:#14161a;max-width:720px;margin:0 auto;padding:24px;background:#ffffff;">
 <h1 style="font-size:23px;font-weight:600;line-height:1.4;margin:0 0 22px;">Agent 需不需要先预测「做完之后会怎样」？——文本世界模型（TWM）技术解读</h1>
+<img alt="文章封面" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/008/images/cover_notebook.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">开场：一次「每一步都没做错」的失败</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">一个 coding agent 被要求修一个 bug。它读了报错、定位到函数、改了两行、跑通单元测试、提交。整套动作都合规，但流水线在集成测试阶段挂了——它改动的那两行，把另一个模块的隐式假设破坏了。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">一个网页 agent 被要求订一张票。它点了搜索、翻了列表、点了「继续」。每一步都对应页面上真实存在的按钮，但它对「点了之后页面会变成什么」没有任何预期，于是在一个需要先选择乘客的页面上重复点「继续」，直到超时。</p>
@@ -28,8 +29,8 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这三条合起来解释了本文后半部分的主线：<strong>能力问题之外，还有一个判据问题。</strong> 这也是我认为这篇综述最值得读的理由——它没有停在「我们也能做世界模型」这一层，而是把「怎么算做对了」当成一等公民来处理。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">三、TWM 到底是什么：一个反事实的转移函数</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">综述把 TWM 定义在转移函数这一层：</p>
-<p style="font-size:16.5px;line-height:1.8;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">M : S × A → T<sub>S</sub>&nbsp;&nbsp;&nbsp;&nbsp;ŝ<sub>t+1</sub> = M(s<sub>t</sub>, a<sub>t</sub>)</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">其中 <span style="font-family:Georgia,'Times New Roman',serif;font-style:italic;">S</span> 是 agent 可见的状态，<span style="font-family:Georgia,'Times New Roman',serif;font-style:italic;">A</span> 是候选动作，输出 <span style="font-family:Georgia,'Times New Roman',serif;font-style:italic;">ŝ<sub>t+1</sub></span> 是<strong>后继状态的文本呈现</strong>——可以是一段自然语言描述、一条结构化记录、一段代码，任何能说明「执行 <span style="font-family:Georgia,'Times New Roman',serif;font-style:italic;">a<sub>t</sub></span> 之后什么成立」的东西。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">$$\mathcal{M}:\ \mathcal{S}\times\mathcal{A}\ \to\ \mathcal{T}_{\mathcal{S}},\qquad \hat{s}_{t+1}=\mathcal{M}(s_t,\ a_t)$$</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">其中 $\mathcal{S}$ 是 agent 可见的状态，$\mathcal{A}$ 是候选动作，输出 $\hat{s}_{t+1}$ 是<strong>后继状态的文本呈现</strong>——可以是一段自然语言描述、一条结构化记录、一段代码，任何能说明「执行 $a_t$ 之后什么成立」的东西。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个定义有两个刻意的留白，读的时候容易滑过去：</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>留白一：输入状态不必是文本。</strong> 「文本」限定的是<strong>转移被暴露给 agent 的形式</strong>。输入可以是对话历史、终端轨迹，甚至是网页截图。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>留白二：底层载体不受限。</strong> 一个 TWM 可以用提示从冻结的 LLM 里「问」出来，可以训练成一个专用的转移预测器，也可以直接写成可执行的程序逻辑。</p>
@@ -54,7 +55,7 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">三条路线之外，真正有决策价值的是<strong>选择规则</strong>。综述给的判据是：<strong>先问目标动力学能不能写成闭式描述。</strong></p>
 <ul style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;"><li>能写——游戏规则、工具 API、GUI 状态机——<strong>优先用 code-as-WM</strong>：确定性与可验证性是白拿的；</li><li>不能写，且属于开放长尾——日常常识、网页的长尾行为——<strong>只能用 LLM-as-WM</strong>；此时再分两岔：能收集到足够轨迹数据就训练，数据稀少就用提示。</li></ul>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">在我看来这条规则比分类本身更实用：它把「该选哪条路」从偏好问题变成了对<strong>动力学形式</strong>的判断。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">Prompting 这一支内部还分三小类，选择顺序大致是「先加例子、再加检索、最后让它自己攒知识」： <strong>in-context world modeling</strong>（把示例与规则写进上下文，让冻结模型扮演环境）、<strong>retrieval-augmented world knowledge</strong>（把环境事实放进可检索的知识库，缓解上下文有限与知识过期）、以及 <strong>self-evolving prompt world models</strong>（让模型把每次预测的反馈沉淀回知识库，逐步演化）。三者的共同上限是同一个：没有参数更新，动力学只能靠上下文与检索来约束。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">Prompting 这一支内部还分三小类，选择顺序大致是「先加例子、再加检索、最后让它自己攒知识」：<strong>in-context world modeling</strong>（把示例与规则写进上下文，让冻结模型扮演环境）、<strong>retrieval-augmented world knowledge</strong>（把环境事实放进可检索的知识库，缓解上下文有限与知识过期）、以及 <strong>self-evolving prompt world models</strong>（让模型把每次预测的反馈沉淀回知识库，逐步演化）。三者的共同上限是同一个：没有参数更新，动力学只能靠上下文与检索来约束。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">综述还记录了三股趋势：监督信号正在离开 token 级保真（SFT 转向奖励训练）、提示路线正在从冻结先验走向检索与自演化知识库、<strong>扩展的对象正从「更多轨迹」变成「更多环境」</strong>。最后一点值得记：环境数量与多样性正在成为头等的扩展轴。而「代码层 + LLM 层」的混合方案，被它列为仍然欠探索的方向。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">六、要多少数据：从两万到五万亿</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这一节的所有数字都来自<strong>综述援引的其他工作</strong>，不是综述自己的实验——写稿时句式必须保留这一层归属。综述把这些工作排成了一条台阶，用来说明「环境越开放，所需数据量级越大」：</p>
