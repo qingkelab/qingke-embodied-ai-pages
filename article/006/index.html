@@ -6,6 +6,7 @@
 </head>
 <body style="font-family:-apple-system,'PingFang SC','Heiti SC',sans-serif;color:#14161a;max-width:720px;margin:0 auto;padding:24px;background:#ffffff;">
 <h1 style="font-size:23px;font-weight:600;line-height:1.4;margin:0 0 22px;">机器人策略可以就是一个 agent 吗？——Agent as Policy（AGP）技术解读</h1>
+<img alt="文章封面" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/006/images/cover_notebook.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">开场：一台没有策略的机器人</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">桌面上摆着一个六角螺母和一根短立柱。机器人先看顶置相机拍下的画面，再调出腕部相机的深度图，写一段程序算出螺母中心与立柱轴心的偏差，然后给机械臂下发一个末端位姿，让它把螺母套上去。套偏了就退回来，重新算一次，再试。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">整个过程里没有一个训练好的策略网络在输出动作。动作是 agent 在运行期算出来、写出来、再发出去的。这就是 2026 年 9 月的论文《Agent as Policy for Robotic Manipulation》要说明的事：<strong>通用 agent 可以直接充当机器人的策略</strong>，全程不做任务专属或环境专属的训练，模型权重保持不变。</p>
