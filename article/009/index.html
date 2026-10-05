@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>从 π0 到 π0.7：VLA 的技术演进与变化趋势</title>
+</head>
+<body style="font-family:-apple-system,'PingFang SC','Heiti SC',sans-serif;color:#14161a;max-width:720px;margin:0 auto;padding:24px;background:#ffffff;">
+<h1 style="font-size:23px;font-weight:600;line-height:1.4;margin:0 0 22px;">从 π0 到 π0.7：VLA 的技术演进与变化趋势</h1>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">开场：一次被同一批作者推翻的设计</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">2024 年 10 月，Physical Intelligence 发布 π0：在预训练视觉语言模型之上<strong>挂一个独立的动作专家</strong>，用 flow matching 生成连续的机器人动作。这个设计后来被大量工作沿用，「VLM 主干 + 动作专家」几乎成了 VLA 的默认写法。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">五个月后，同一批作者发了一篇论文，标题写得很直白：<em>Knowledge Insulating Vision-Language-Action Models: Train Fast, Run Fast, Generalize Better</em>。它的结论是：<strong>朴素地把连续动作专家接进 VLM，会显著损害训练速度，也会损害预训练语义知识的迁移。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这不是推翻自己，而是把当初那个设计选择的代价测出来了。在「模型又变强了」的叙事里，这种自己给自己做减法的工作很少被讲，但它往往比新的 SOTA 更有信息量。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这篇文章只跟一条线：从 π0 到 π0.7，同一家实验室的七篇工作（含一条工程侧对照）之间，到底改了哪几件事。结论先说：<strong>它们不是一条「每代更强」的阶梯，而是四次把瓶颈从一个位置搬到另一个位置。</strong></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">一、π0：把动作从语言 token 里拿出来</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">先说起点。π0 要解决的问题很具体：视觉语言模型在互联网图文上学会了「看懂」和「听懂」，但它们的输出是离散 token，而机器人要的是连续、高频、成段落的动作。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文的答案是把两件事分开：主干沿用预训练的 PaliGemma，另外<strong>从零初始化一个约 3 亿参数的动作专家</strong>，由它通过 flow matching 生成连续的动作块。主干负责视觉语言表征，动作专家负责把这个表征翻译成连续控制信号。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">预训练数据的量级是这篇文章的另一个重点：<strong>约 10000 小时的灵巧操作数据，来自 7 种机器人配置与 68 项任务</strong>，此外还混入此前公开的机器人数据（OXE、DROID、Bridge）。论文把这类数据规模本身当作论点的一部分——它论证的是「通用策略需要多大的数据池」，而不只是某个模块的设计。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">还有一个容易被忽略的设定：这批数据的控制频率跨度很大，论文面向的是<strong>包括 50 Hz 在内的</strong>高频灵巧任务。控制频率之所以重要，是因为它直接决定了「一次推理要输出多长的一段动作」——这条约束在后面几篇里反复出现。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">评价方式也值得单独记一句，因为它决定了后面所有数字该怎么读。论文的指标是<strong>每个任务、每个方法平均 10 次试次后的归一化得分</strong>，并且允许部分成功：比如「收拾桌子」的得分是物体被正确放进容器的比例，而不是成功或失败的二值。这类计分方式比成功率更能反映连续任务的进度，但也意味着它不能和其它论文的成功率直接比较。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">开箱测试的任务清单里，有些是复述指令、有些是长时程任务，<strong>完成时间在 5 到 20 分钟之间</strong>，其中一部分还需要高层指令引导。论文另外做了一个消融：把模型缩小并<strong>去掉 VLM 预训练初始化</strong>（论文里叫 π0-small），用于衡量 VLM 初始化带来了什么。结论是 π0 的指令跟随能力明显更好，而且这个能力会传导到需要高层引导的长时程任务上——不过论文自己也说明，模型变小与去掉 VLM 初始化这两件事在这个比较里绑在一起，很难完全分开。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">π0 的结论部分列了三条限制，其中第一条对整条线都很关键：<strong>他们把所有能拿到的数据混在一起训练，但「哪类数据更有用、该怎么加权」仍然是未解问题</strong>。也就是说，从第一篇开始，数据配比就是一个被承认的空白——后面 π0.5 与 π0.7 做的事情，正是往这个空白里填内容。</p>
+<img alt="π 系列的七个节点与四次瓶颈搬移" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/009/images/fig1_timeline_bottlenecks.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 1：本文按各论文 v1 时间排列的七个节点，以及每次改动实际搬动的那根瓶颈。图中「瓶颈」一列是本文的读法，不是论文自己的说法。图：青稞社区绘制。</em></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">二、FAST：同一批人为什么又回头做自回归</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">如果 π0 已经用 flow matching 解决了「连续动作怎么生成」，一个自然的预期是：自回归这条路线应该被放下了。事实相反——2025 年 1 月，同一批作者发表了 FAST，专门为<strong>自回归 VLA</strong> 设计动作 tokenization。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文先指出问题：此前主流的做法是「逐维、逐时间步分箱」，把每个动作维度离散成若干档。这种朴素方案在<strong>高频灵巧任务上表现很差，甚至完全失败</strong>。原因不难理解：动作维度一多、频率一高，序列就长得离谱，而分箱把连续信号里最需要的精度丢掉了。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">FAST 的替代方案借用了信号处理的直觉：先用<strong>离散余弦变换（DCT）</strong>对动作序列做时序压缩，再用子词编码把压缩后的系数变成 token。这样处理之后，动作序列的长度大幅下降，自回归模型才有机会把整段动作学下来。论文同时发布了一个通用 tokenizer <strong>FAST+，在一百万条真机动作轨迹上训练</strong>，可以直接当作黑盒用于不同动作空间与控制频率。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">它给出的对照数字是这样的：把 FAST 和 π0 结合，自回归 VLA 可以扩到 1 万小时数据，<strong>表现与 diffusion VLA 相当，而训练时间最多降到原来的五分之一</strong>。这个「最多 1/5」说的是训练时间，不是推理时间。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文里的两个对照更具体。一是在大数据的「收拾桌子」任务上，用 FAST 的自回归模型<strong>收敛所需的训练步数只有 diffusion 版本的三分之一</strong>；二是按 GPU 小时计，<strong>用 FAST 训练的 π0 只花掉原版 π0 约五分之一的训练算力</strong>。此外论文还报告了两个附带现象：FAST 训练出来的自回归模型<strong>语言指令跟随更准</strong>；以及 FAST 不只对 π0 有效——把它接到 OpenVLA 上，那个原本在高频数据上训不动的模型也能训起来了。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">我在这里想强调的不是谁更快，而是<strong>动作接口在这条线上是一个被反复调整的设计变量</strong>：同一批人，一边用连续专家，一边把自回归做通。这不像代际更替，更像是在同一个基座上试不同接口。</p>
+<img alt="FAST 的动作 tokenization 管线" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/009/images/fast_fig4_tokenization.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 2：该论文给出的 FAST 动作 tokenization 管线——归一化后的动作块先做离散余弦变换，再压缩、量化并做子词编码。来源：Pertsch et al., arXiv:2501.09747v2, Fig. 4。该文为 CC BY，允许在署名前提下复用。</em></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">三、Knowledge Insulation：动作专家是有代价的</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第三条线索是前面提到的那篇自我勘误式论文。它问了一个工程上很实在的问题：<strong>往预训练 VLM 上加一个连续动作专家，主干学到的语义知识是被保住了，还是被破坏了？</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文的答案分两层。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第一层是坏消息：动作专家的梯度会穿过主干，<strong>既拖慢训练，也损伤语义知识的迁移</strong>。论文给出的一个可读数字是在多本体通用模型的 table bussing 任务上，只用 flow matching 的 π0 要达到相近表现，<strong>需要大约 7.5 倍的训练步数</strong>，而用他们的配方训练与 π0-FAST 一样快。这个数字来自单一任务、单一设置，我不会把它读成「所有 flow matching 路线都慢 7.5 倍」，但它足以说明代价是真实且可测的。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第二层是他们提出的做法：<strong>把主干和动作专家的梯度分开</strong>。主干继续用离散动作 token（也就是 FAST 那一套）训练，动作专家走自己的连续路径，两者通过 stop-gradient 隔离。作者的表述是，这样一来「离散动作 token 提供了替代的学习信号」，主干学得快也更稳，动作专家保留了快速推理的能力。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">消融里有一个值得记的结果：在协同训练的配方中，<strong>拿掉 VLM 数据带来的影响最大</strong>。作者给出的假设是这批数据用于避免对预训练表示的灾难性干扰——注意这是假设，不是已经证实的机制。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把 π0 和这篇放在一起读，得到的是一条比「加模块」更细的经验：<strong>VLM 主干的知识是资产，但它是会被训练的其它目标消耗掉的资产。</strong> 想同时要语义泛化和连续高频控制，就得先决定这两件事之间怎么分配梯度。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">我很在意这篇论文的出现方式，而不只是它的数字。在一条主要由「更大、更强、更多数据」驱动的技术线上，<strong>由提出原始设计的团队自己给出「这个设计有代价」的可测量证据</strong>，是很少见的一种形式。它给出的不是一个更好的模块，而是一个关于「模块之间会互相消耗」的判断。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个判断还有一个不太显眼的后果：<strong>它把「评测什么」的问题带进来了。</strong> 如果主干的语义知识会被动作训练消耗，那么只报任务成功率的评测就看不到这部分损失；要看见它，就得同时测指令跟随、物体与场景语义这类与动作无关的能力。论文里那组语言跟随与泛化的对照，做的正是这件事。对做评测的人来说，这比 7.5 倍这个数字更值得抄。</p>
+<img alt="两条动作生成路线，以及隔离之后的分工" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/009/images/fig2_action_interfaces.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 3：左侧是 π0 的连续路线（主干与动作专家一起训练），右侧是 FAST 的离散路线（动作先被 token 化再自回归）；下面是 Knowledge Insulation 给出的分工——主干走离散 token 的学习信号，动作专家独立承担连续输出。图为本文整理，不是论文原图。图：青稞社区绘制。</em></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">四、π0.5：换的不是模型，是数据的组织方式</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">π0.5 接着 π0 做，但改动落在数据这一侧。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文的出发点是「实验室里的成绩不等于真实世界里的成绩」：机器人在结构化环境里能完成的任务，到了没见过的家里往往做不了。它给出的办法是<strong>异构协同训练</strong>：把不同来源的数据放进同一次训练——多个机器人的操作数据、<strong>高层语义子任务预测</strong>、网络图文数据，以及自身平台采集的数据。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">数据规模上有一个容易误读的数字：论文提到在多种真实家庭里用移动操作平台自采的数据<strong>约 400 小时</strong>。这个数字只指自采的移动操作部分，不是总量；把它和 π0 的 1 万小时直接比较是没有意义的。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">训练样本的形式也变了：一条样本里同时包含图像观测、语言指令、目标检测、语义子任务与低层动作。推理时，模型<strong>先预测语义子任务（比如「拿起砧板」），再据此生成低层动作块</strong>。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文报告的结果是：系统能在训练中没出现过的厨房与卧室完成任务，任务时长<strong>在 10 到 15 分钟</strong>这个量级；论文也称这是首次由端到端学习系统在新家庭完成长时程、灵巧的操作。这个「首次」是作者自陈，我在正文里保留它的归属。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">到这里，这条产线上「换了个东西」的性质已经比较清楚了：π0 的改动在<strong>模块</strong>，π0.5 的改动在<strong>数据配方与训练信号的层次</strong>。模型的骨架没有重来，但模型要学的东西变了——它不只要学动作，还要学「这个任务该拆成哪几步」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文的消融做得比较细，值得单独说，因为它把「数据配方」拆成了可检验的部件。协同训练的原料被分成五份：<strong>网络数据（WD）、多环境的非移动机器人数据（ME）、实验室条件下采集的跨本体数据（CE）、高层语义子任务数据（HL）、以及言语指令数据（VI）</strong>。论文在仿真家庭里逐项抽掉它们，再比较性能：</p>
+<ul style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;"><li>抽掉网络数据、多环境数据或实验室跨本体数据，性能都下降；把非移动机器人的数据整体去掉、只用目标平台自己的数据加网络数据训练，退化尤其明显。论文据此认为，<strong>即使策略已经见过测试家庭里的机器人数据，其它来源的数据依然是泛化的必要条件</strong>。</li><li>抽掉高层语义子任务数据同样明显变差；但反过来，如果训练里有这些数据、推理时不做显式的子任务推断（论文叫 implicit HL），性能排到第二，仅次于完整配方。作者的结论是：<strong>子任务推断的收益，有很大一部分来自把子任务数据放进训练，而不只是来自推理时的分层。</strong></li><li>言语指令数据在高层数据里只占<strong>约 11%</strong>，但去掉它性能显著下降。论文由此认为，人给出的指令是一种独立且高效的监督信号。</li></ul>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">作为对照，论文还试过用 GPT-4 当高层策略（把任务描述和候选标签表喂给它），表现比 π0.5 自己的高层策略差；论文也把「人类专家当高层策略」当作上界基线，而完整 π0.5 在这个设置里超过了它。后一个结果我照实写，但要提醒一句：那是他们自己的任务集与判定标准。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">π0.5 的限制也写得很直白，而且对理解后面的发展有用：遇到不熟悉的抽屉把手、物理上难开的柜子会失败；机械臂挡住该擦的污渍这类<strong>部分可观测</strong>情形会出错；高层子任务推断<strong>容易被干扰</strong>（例如放东西时反复开关同一个抽屉）；模型<strong>只能处理相对简单的指令</strong>，其复杂度上限由训练数据决定；此外它用的上下文<strong>相对有限</strong>，缺少记忆机制。最后这句，在 π0.7 里有了直接回应。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">五、RTC：一条容易被忽略的工程线</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">上面三节讲的都是「学什么」，这一节讲「学出来的东西怎么跑起来」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">action chunking 让策略一次输出一段动作，解决了时序一致性；但它没有解决延迟：模型还在算下一段动作时，机器人已经执行完当前这一段了，于是出现停顿，或者为了不停顿而在 chunk 边界做出训练分布之外的抖动。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">2025 年 6 月的 RTC 给出了一个<strong>推理时算法</strong>：不需要重训，对 diffusion / flow 策略开箱可用。做法是在执行当前动作块的同时生成下一块，<strong>把保证会执行的动作「冻结」，其余部分让模型「补全」</strong>——用论文的话说就是 inpainting。评测上，论文用了 Kinetix 仿真里的 12 个高动态任务与 6 个真实双臂任务，报告它对推理延迟更鲁棒，在精确任务上（例如划火柴）也能保持成功率。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">放在这条线上看，RTC 的意义是：当策略的输出变成「一段动作」之后，<strong>推理时延就从部署细节变成了模型设计的一部分</strong>。它和前面几节不是同一条线上的事，但它解释了为什么「动作接口」这个问题的讨论总绕不开频率与延迟。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">用更直白的话说，这类系统的困难在于「想」和「动」的时间尺度不一样。模型算下一段动作要花的时间，与机器人执行这一段动作的时间，是两条独立的时间线；当模型变大、动作变精细，这两条线就会错位。RTC 没有让模型变快，而是<strong>让执行去迁就推理的节奏</strong>：已经确定要执行的那部分动作不许改，剩下还没执行的允许被新的推理结果覆盖。这个做法把「不确定性」限制在一段动作的尾部，代价是每次覆盖都要求模型在已知上下文下重新接续——接续得好不好，论文用任务成功率来说明。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">值得注意的是这条线的证据形态：论文在仿真里用 12 个高动态任务、在真机上用 6 个双臂任务来验证对延迟的鲁棒性。这种「针对某个工程约束单独设计一组评测」的做法，在具身方向并不常见，但它也意味着这些结果的适用面，被限定在论文选择的延迟区间与任务类型之内。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">六、π*0.6：当演示不再是唯一的学习信号</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">前面几篇的共同前提是：从演示里学。模仿学习的天花板也在这里——<strong>策略通常不会超过演示它的那位</strong>，而演示的采集成本又极高。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">π<em>0.6 想换掉这个前提。论文提出 RECAP，把三类数据放进同一个训练回路：<strong>演示数据、模型自己执行时采集的数据（on-policy）、以及自主执行过程中人类介入的纠正</strong>。方法上它用了优势条件化（advantage conditioning），先做离线强化学习预训练得到 π</em>0.6，再在具体任务上收集真机数据做专精。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文报告的结果是：在部分最难的任务上，用完整 RECAP 训练的模型可以把任务吞吐<strong>提升超过一倍</strong>，同时把失败率<strong>降低大约一半</strong>；评估场景包括真实家庭里的折衣服、可靠地装盒，以及用专业咖啡机做浓缩咖啡。这些数字都是作者自报、也只适用于本文的任务集合。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里值得注意的方向性变化是：<strong>训练信号从「别人怎么做」扩展到了「自己试错的结果 + 人的即时纠正」。</strong> 这条路线的代价同样清楚——在真实世界里收集数据、判断好坏、并保证训练稳定，每一项都比离线喂演示麻烦。</p>
+<img alt="训练信号的三次扩展" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/009/images/fig3_training_signals.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 4：本文整理的三次扩展——只学演示（π0）→ 演示加语义子任务（π0.5）→ 演示加自主数据与人类干预（π</em>0.6），最右侧是 π0.7 把描述「怎么做」的上下文也纳入训练信号。图为本文整理。图：青稞社区绘制。*</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">方法上的细节值得展开一点，因为它回答了一个很实际的问题：<strong>奖励是从哪来的。</strong> 论文先训练一个<strong>价值函数，用来评估当前进度离成功还有多远</strong>；再用它估计数据里每个动作的优势值；最后让策略以这个优势值（论文用的是二值化后的版本）为条件来训练。用这种方式，系统不需要手写奖励函数，而是把「这个动作比平均水平好还是差」直接变成条件信号。数据侧分两类：演示与既有数据用来做<strong>离线强化学习预训练</strong>；部署阶段的自主执行数据与<strong>人类遥操作介入</strong>用来做任务专精——后者在文献里常被称作 human-gated 的介入式学习。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这套设计也有它自己的问题清单。论文承认评估集中在本文的任务集合上；「更多自主经验是否一定换来更好的策略」在长时程任务上仍取决于数据质量与价值函数的估计精度；而在真机上持续采集经验、判断优劣并保持训练稳定的成本，论文没有给出与离线方案可比的统一口径。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">七、π0.7：把「怎么做」也写进条件</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">最新的一篇是 2026 年 4 月的 π0.7，标题里两个词值得单独拎出来：<strong>steerable（可引导）</strong>与 <strong>emergent（涌现）</strong>。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文的出发点是一个训练上的两难：把演示、自主执行数据（包括失败）、以及人类视频与网络数据混在一起训练，数据的策略与质量参差不齐；朴素地训练会让模型把不同策略<strong>平均掉</strong>，得到谁也不像的结果。它的解法是<strong>在训练期给出多样化的上下文条件</strong>，让模型知道这一段数据是在什么条件下产生的。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">具体的条件包括：描述任务的<strong>语言指令</strong>，描述执行方式与表现的多模态信息，例如<strong>剧集元数据（论文里用了 1 到 5 的质量分级、长度等）、子目标图像，以及控制模态</strong>。这些条件在测试时可以给、也可以不给；论文的主张是把它们放进训练，模型才更有能力组合已经学过的概念。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">模型规模上，主干初始化自 Gemma3 的 <strong>40 亿参数</strong> VLM，动作由 flow matching（或 diffusion）目标生成。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文报告的能力清单包括三类：<strong>开箱即用</strong>（不做任务专属后训练就能完成浓缩咖啡机、折衣服、装垃圾袋、装盒、削蔬菜这类长时程灵巧任务）；<strong>指令泛化</strong>（在完全没见过的厨房与卧室里跟随多样指令）；<strong>零样本跨本体</strong>（把折衣服这类灵巧任务迁移到一个从没被训练过折衣服的机器人上，论文称首次尝试即接近人类遥操作的初始水平）。此外还报告了<strong>组合式泛化</strong>——用没见过的技能组合去用新的厨房设备。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这些都是作者自陈的能力，没有第三方复现，也缺少跨机构的可比协议。我保留它们的位置，但会把「论文报告」四个字一直挂在前面。真正值得记的是那条设计判断：<strong>泛化的瓶颈不只是数据多少，还包括数据里的信息是否被显式写出来了</strong>——谁做的、做得好不好、目标是什么状态，这些在 π0 时代被丢掉的上下文，在 π0.7 里被写进了 prompt。</p>
+<img alt="π0.7 的上下文条件" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/009/images/fig4_context_conditioning.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 5：本文整理的 π0.7 上下文条件——除了「做什么」的语言指令，训练期还提供描述「怎么做」的元数据、子目标图像与控制模态；部分条件在测试时可给可不给。图为本文整理，不是论文原图。图：青稞社区绘制。</em></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把 π0.7 与 π0.5 并排看，更容易看出这条线在往哪走。π0.5 已经引入了「高层语义子任务」这种额外监督，但它仍是一种<strong>任务内部的中间表示</strong>；π0.7 进一步把「这段数据是在什么条件下产生的」也变成监督信号——执行策略、完成质量、目标状态。两者的共同点是：<strong>都在给动作数据附加更多结构，而不是单纯增加动作数据的量。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">需要保留的疑问也很多。论文报告的能力来自作者自己的任务集与判定标准，跨实验室的可比性未知；「涌现能力」是论文的主张，不是已被独立验证的现象；上下文条件在测试时哪些该给、哪些可以省略，论文给了灵活性，但这也意味着<strong>同一个模型在不同调用方式下表现会不一样</strong>，评测时如何固定这一点，论文没有给出统一协议。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">八、六篇放在一起，改的到底是哪几件事</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把这条线摊开，改动集中在四个位置，每一个都可以用一句话说清：</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第一，动作接口从「选一条路」变成「让两条路分工」。</strong> π0 用连续动作专家，FAST 把自回归做通，Knowledge Insulation 最后给出的是分工方案：主干走离散 token 的学习信号，动作专家独立输出连续动作。这里没有谁取代谁。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第二，训练速度成了被显式测量的对象。</strong> Knowledge Insulation 用 7.5 倍训练步数把「加一个动作专家」的代价摆到台面上。在模型越来越大的行业里，愿意公布自己方案更慢的读数，本身是稀缺的。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第三，数据侧的改动从「更多」转向「更杂 + 更有结构」。</strong> π0 的核心是 1 万小时；π0.5 换成多机器人 + 语义子任务 + 网络数据的协同训练；π0.7 进一步把执行方式、质量、子目标这些上下文写进训练条件。数据量当然还在增加，但它已经不再是唯一的解释变量。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第四，学习信号从演示扩展到经验。</strong> π*0.6 把自主执行数据与人类干预纳入训练回路，等于承认演示数据的天花板；π0.7 的数据清单里也明确包含自主数据（含失败）与非机器人数据。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">有几件事反而没怎么变：一直是「同一个模型 + 更多更杂的数据」；一直在用大规模真机实验当主要证据；也一直没有出现一个跨机构可比、能横向裁决这些设计的评测协议。这也是我在读这条线时最不确定的地方——<strong>上面四个变化都是从各自的论文里读出来的，它们之间的关系并没有被同一套评测检验过。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">如果把这条线当作一份工程经验来读，还有一层更隐蔽的观察：<strong>每一篇的改进都建立在前一篇暴露出来的问题上，但问题的表述方式在变。</strong> π0 的问题是「怎么输出连续高频动作」，属于接口问题；FAST 的问题是「离散方案在高频上失败」，属于表示问题；Knowledge Insulation 的问题是「加了模块之后主干被消耗」，属于训练动力学问题；π0.5 的问题是「数据不够杂」，属于配方问题；π*0.6 的问题是「演示有天花板」，属于信号来源问题；π0.7 的问题是「数据混在一起会互相平均」，属于条件设计问题。<strong>六篇里，只有前两篇在改模型结构；后四篇改的是数据怎么组织、信号从哪来、条件怎么写。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个观察并不能证明架构不重要。它更像是说：在这条具体的产线上，<strong>当模型骨架稳定下来之后，多出来的空间被用在了数据与训练信号上</strong>，而这个空间目前还没有被系统性地测量过——每一篇只在自己的任务集上报告自己那一项改动的收益。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">九、青稞技术小结</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">如果只留三句话：</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第一，这条线最有价值的不是最新那篇，而是第三篇。</strong> Knowledge Insulation 把「加模块」的代价量化出来，并且给出一个可复用的分工方案。对做系统的人来说，这比再多的能力清单都更有决策价值。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第二，VLA 的演进正在从「改架构」转向「改数据的组织方式」。</strong> π0 的改动是模块级的；到了 π0.5 与 π0.7，改动落在数据配比、训练信号的层次与上下文的显式程度上。这不是说架构不重要，而是说架构之外的空间正在被更多地探索。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第三，这条线的成绩单仍然全部由作者自报。</strong> π0.5 的「首次」、π*0.6 的吞吐与失败率、π0.7 的涌现能力，都来自各自的论文与各自的评测协议。把它们串成一条上扬曲线是很容易的，但那条曲线目前不存在于任何一份公开的、同口径的证据里。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">如果要给这条线留一个可验证的观察点，我会选这个：<strong>接下来是否会出现一篇工作，用同一套任务与同一套判定标准，把这六篇里的若干项改动放在一起比较。</strong> 在那样一份证据出现之前，这条线上每个数字都只能在自己的上下文里读——这不是对论文的苛责，而是这条路目前公共证据的边界。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">附：与本系列文章的关系</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第 2 篇讨论的是 VLA 主线本身：RT-2、Open X-Embodiment、Octo、OpenVLA、π0 与 π0.5 各自解决了什么接口问题。那一篇的视角是<strong>横向</strong>的——把不同实验室的做法放进同一张坐标系。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">本篇换的是<strong>纵向</strong>视角：只看一条产线内部的六次改动，问每一次改动把瓶颈搬到了哪里。两篇在 π0 / π0.5 处有重叠，但落点不同：第 2 篇关心「VLA 这条路是什么」，本篇关心「同一条路自己是怎么变的」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">与第 4 篇（World-Action Models）的关系是互补的：那一篇讨论把「未来的后果」拉进决策回路，本篇讨论的是动作生成与数据配方；两者都在回答「机器人学什么」，但切入的层次不同。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">来源</h2>
+<ul style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;"><li>π0：<a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener">https://arxiv.org/abs/2410.24164</a></li><li>FAST：<a href="https://arxiv.org/abs/2501.09747" target="_blank" rel="noopener">https://arxiv.org/abs/2501.09747</a></li><li>π0.5：<a href="https://arxiv.org/abs/2504.16054" target="_blank" rel="noopener">https://arxiv.org/abs/2504.16054</a></li><li>Knowledge Insulation：<a href="https://arxiv.org/abs/2505.23705" target="_blank" rel="noopener">https://arxiv.org/abs/2505.23705</a></li><li>RTC：<a href="https://arxiv.org/abs/2506.07339" target="_blank" rel="noopener">https://arxiv.org/abs/2506.07339</a></li><li>π*0.6：<a href="https://arxiv.org/abs/2511.14759" target="_blank" rel="noopener">https://arxiv.org/abs/2511.14759</a></li><li>π0.7：<a href="https://arxiv.org/abs/2604.15483" target="_blank" rel="noopener">https://arxiv.org/abs/2604.15483</a></li></ul>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>图片出处</strong>：图 2 复用 <code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f2f4f6;padding:1px 5px;border-radius:4px;">arXiv:2501.09747v2</code> 的 Fig. 4（该文为 CC BY，署名复用）；图 1、3、4、5 为青稞社区绘制。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>归因说明</strong>：本文所有性能数字均来自对应论文的作者自报，正文逐处写明「论文报告」；涉及跨篇比较时只描述设计差异，不比较成绩高低。判断部分以第一人称给出，不来自任何一篇论文。各篇的训练数据、任务分布与评测协议互不相同，正文不把它们的成绩做横向换算。</p>
+</body>
+</html>
