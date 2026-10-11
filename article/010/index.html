@@ -23,21 +23,21 @@
 <img alt="同一个试次预算，两种花法" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/010/images/fig1_budget_allocation.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 1：同一个试次预算下的两种花法。上：按固定顺序试改动；下：先维护互相竞争的假设，再按「期望不确定度下降 ÷ 实验成本」挑下一次实验。这是本刊用来定位这篇论文的分析框架，不是论文原图。图：青稞社区绘制。</em></p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">二、这篇换的那一层：把「选实验」写成函数</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文先做了一个形式化，把 harness 本身当作可被优化的对象。跑过 k 次物理 episode 之后，当前 harness 记作 A_k，包含四样东西：可执行的代码、技能、假设集合 H_k、累积记忆 M_k。每一次 episode，系统从候选实验集合里挑一个物理实验：</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">t*_k = f(T_k, H_k, M_k)</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">执行完得到物理证据 e_k（执行轨迹与任务结果），harness 随之更新：</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">A_(k+1) = g(A_k, t*_k, e_k)</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文先做了一个形式化，把 harness 本身当作可被优化的对象。跑过 k 次物理 episode 之后，当前 harness 记作 A<sub>k</sub>，包含四样东西：可执行的代码、技能、假设集合 H<sub>k</sub>、累积记忆 M<sub>k</sub>。每一次 episode，系统从候选实验集合里挑一个物理实验：</p>
+<p style="font-size:16.5px;line-height:2.1;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">t<sup>*</sup><sub>k</sub> = f(T<sub>k</sub>, H<sub>k</sub>, M<sub>k</sub>)</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">执行完得到物理证据 e<sub>k</sub>（执行轨迹与任务结果），harness 随之更新：</p>
+<p style="font-size:16.5px;line-height:2.1;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">A<sub>k+1</sub> = g(A<sub>k</sub>, t<sup>*</sup><sub>k</sub>, e<sub>k</sub>)</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">目标是让最终 harness 在 N 次评测 episode 上的任务成功率最大，而它只有 B 次物理 episode 的预算可以花。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个目标函数里没有「模型能力」这一项，因为模型是给定的、冻结的。能被预算影响的只有 harness 的代码、技能与记忆。所以这篇论文要说明的事，落在<strong>同一个模型加有限的试次能不能被用得更值</strong>上，而不是模型本身能不能更强。候选实验集合 T_k 由当前假设与记忆决定：能更新某组假设置信度的匹配试次才会进入候选。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个目标函数里没有「模型能力」这一项，因为模型是给定的、冻结的。能被预算影响的只有 harness 的代码、技能与记忆。所以这篇论文要说明的事，落在<strong>同一个模型加有限的试次能不能被用得更值</strong>上，而不是模型本身能不能更强。候选实验集合 T<sub>k</sub> 由当前假设与记忆决定：能更新某组假设置信度的匹配试次才会进入候选。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个写法把「下一步该试什么」从实现细节提升成了一个独立的函数 f。对做系统的人，它的含义是可验证的：<strong>如果选实验的策略可以被单独替换，那么「试次分配」就有了自己的评测面</strong>——固定冻结的模型、任务与预算，只替换 f，就能测出分配策略本身值多少。论文后面那组与随机探索的对照，用的正是这个切口。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文把系统分成两边：<strong>快系统</strong>（Fast System）从假设出发挑实验、执行、把结果写回置信度，并推动代码与技能演化；<strong>慢系统</strong>（Slow System）维护三层记忆，决定哪些证据该保留、合并、抽象、压缩、遗忘或跳过。两边的接口是假设与记忆。</p>
 <img alt="EmbodiedRSI 总览" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/010/images/rsi_fig2_overview.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 2：论文给出的系统总览——左侧快系统（假设与 VOI、代码-技能共演化、物理试验），中间分层记忆，右侧慢系统（闭环奖励、记忆动作、operator）。来源：Song et al., arXiv:2610.10498v1, Fig. 2。</em></p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">三、机制一：假设图，把「改什么」变成可检验的命题</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">要让「下一次试什么」可计算，候选改动先得可比较。论文用一张<strong>假设图</strong>来装它们：代码改动（C 节点）与技能改动（S 节点）都是图中的节点，各自带一条指向修订版本的 <strong>refines</strong> 边；随着物理证据积累，原本悬着的代码-技能关联会被确认成 works-with 关系。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">每个假设的置信度用一个 Beta 先验维护：α、β 是先验的支持与反驳计数，n_sup 记录支持它的实验数，n_ref 记录不一致的结果数，后验均值为</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">c_i = (n_sup,i + α) ÷ (n_sup,i + n_ref,i + α + β)</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">置信度只回答「这个假设被支持到什么程度」。要决定下一次试什么，还需要一个「哪里还不确定」的度量——论文把探索不确定度写成各假设支持率熵之和 H_exp = Σ h₂(q_i)，其中 q_i 是「该假设支持率大于二分之一的概率」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">每个假设的置信度用一个 Beta 先验维护：α、β 是先验的支持与反驳计数，n<sub>sup</sub> 记录支持它的实验数，n<sub>ref</sub> 记录不一致的结果数，后验均值为</p>
+<p style="font-size:16.5px;line-height:2.1;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">c<sub>i</sub> = <span style="display:inline-block;vertical-align:-0.55em;text-align:center;margin:0 2px;line-height:1.25;"><span style="display:block;border-bottom:1px solid currentColor;padding:0 4px;">n<sub>sup,i</sub> + α</span><span style="display:block;padding:0 4px;">n<sub>sup,i</sub> + n<sub>ref,i</sub> + α + β</span></span></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">置信度只回答「这个假设被支持到什么程度」。要决定下一次试什么，还需要一个「哪里还不确定」的度量——论文把探索不确定度写成各假设支持率熵之和 H<sub>exp</sub> = Σ, h<sub>2</sub>(q<sub>i</sub>)，其中 q<sub>i</sub> 是「该假设支持率大于二分之一的概率」。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">假设不是人写好的固定清单：每一条执行轨迹与结果都会用来生成新的代码/技能假设，或者把旧假设细化成更具体的版本（也就是 refines 边上那些新节点）。新假设刚出现时置信度低、不确定性高，正因为如此，一个匹配试次在检验旧假设的同时，也顺手给新假设提供了初始证据。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">从使用者角度看，这套记账方式带来一个实际好处：<strong>每次实验之后，系统能说出「这条假设现在被支持到什么程度」</strong>，而不是只留一段成功或失败的记录。一条差到某个阈值的假设可以被明确排除，不用再占用下一轮的实验名额。相反，如果只记录「试过、没成」，团队很难区分「这条路错了」和「这次手抖了」。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">代价是把匹配试次做成真正可比较的实验。要固定初始状态，意味着场景要能被摆回原样；要固定其它调用与顺序，意味着这一次试验除了被检验的那一处，别的代码路径不能动。这两条都是人工约束，也解释了这套系统为什么需要一个「场景重置」成本项。</p>
@@ -46,11 +46,11 @@
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里有一个容易被跳过的工程前提：更新假设用的是<strong>匹配试次</strong>——固定初始状态、固定其它调用及其顺序，只比较成功率差（arXiv:2610.10498v1，§3.2）。真机上「这次成了、上次没成」之间可能同时变了摆位、光照、抓取姿态；这些变量不按住，差值就不可归属于那条假设。按不住还有一个更贵的后果：<strong>置信度会沿错误方向更新，而后面所有决策都建立在这些置信度上</strong>。错误证据的代价不止那一次试次，还把后续的实验选择一起带偏。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">四、机制二：信息价值除以成本</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">候选实验是那些能更新一组假设置信度的匹配试次。论文给每个实验算一次<strong>信息价值</strong>：执行它之后，探索不确定度的期望下降</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">G_k(t) = H_exp(D_k) − E_e[ H_exp(D_k ∪ {e}) | D_k, t ]</p>
+<p style="font-size:16.5px;line-height:2.1;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">G<sub>k</sub>(t) = H<sub>exp</sub>(D<sub>k</sub>) - E<sub>e ∼ P(e | D<sub>k</sub>, t)</sub>[ H<sub>exp</sub>(D<sub>k</sub> ∪ {e}) ]</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">只按信息量排序还不够，真机上不同实验贵的程度不同。论文另外定义实验成本，由四项加权组成：</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">C(t) = w_τ · T_t + w_s · N_step,t + w_g · C_GPU,t + w_r · C_reset,t</p>
+<p style="font-size:16.5px;line-height:2.1;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">C(t) = w<sub>τ</sub> T<sub>t</sub> + w<sub>s</sub> N<sub>step,t</sub> + w<sub>g</sub> C<sub>GPU,t</sub> + w<sub>r</sub> C<sub>reset,t</sub></p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这四项分别是耗时、仿真步数、GPU 开销与场景重置开销。最终打分是两者相除，取最大者作为下一次实验：</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">VOI_k(t) = G_k(t) ÷ C(t)，t*_k = arg max_t VOI_k(t)</p>
+<p style="font-size:16.5px;line-height:2.1;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">VOI<sub>k</sub>(t) = G<sub>k</sub>(t) / C(t), 　　 t<sup>*</sup><sub>k</sub> = arg max<sub>t</sub> VOI<sub>k</sub>(t)</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">写成比值而不是相减，对真机实验更自然：它默认了「同样一份不确定性的减少，值多少代价」。我在这里留意到的是成本里的最后一项——把「把场景摆回去要多久」算进实验成本，意味着这套系统的默认场景是在真实工作台旁边反复重摆，而不是跑一次大评测。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把这套打分和「按顺序把每种改动都试一遍」放在一起看，差别就清楚了：后者不区分哪一项还没被证清楚，已经确认有效的方向还会被反复验证，而没被证清楚的假设可能一直排在队尾。VOI 打分做的正是把「哪个改动还没被证清楚」顶到前面去。还有一个隐含前提值得留意——<strong>熵对所有假设一视同仁，但不同假设失败起来的后果并不一样</strong>：有的改动错了只是多花几秒，有的可能让机械臂撞上台面。成本项覆盖的是实验开销，不是风险。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">对打算在自己平台上跑这套东西的人，这一层还有两个可操作的后果。第一，<strong>候选实验的构造决定了整套系统的天花板</strong>：如果候选集合里根本没有「能区分这两条假设」的那一类实验，打分再准也选不出有用的试次。第二，<strong>成本权重决定系统的性格</strong>：把重置开销调高，系统会更倾向一次做干净的实验；调低，它会接受更多「将就着试」的快速迭代。这两种性格在不同平台上都可能合理，但它们不是同一套方法。</p>
