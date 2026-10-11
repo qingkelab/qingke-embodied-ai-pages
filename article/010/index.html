@@ -6,119 +6,104 @@
 </head>
 <body style="font-family:-apple-system,'PingFang SC','Heiti SC',sans-serif;color:#14161a;max-width:720px;margin:0 auto;padding:24px;background:#ffffff;">
 <h1 style="font-size:23px;font-weight:600;line-height:1.4;margin:0 0 22px;">机器人该把有限的试次花在哪里？——EmbodiedRSI 技术解读</h1>
-<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">开场：一个算术题，和一次 10% 到 90%</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">桌面上散着几张扑克牌，机器人要挑出「数值乘以五等于一百」的那张。这个任务难的地方不在抓取，而在<strong>先要把题算清楚再决定抓哪张</strong>：牌的顺序和朝向每次都会被打乱，模型必须先在当前画面里完成一次语义与算术推理，才知道该动哪一张。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">2026 年 10 月的论文《EmbodiedRSI: Active Continual Robot Learning Through Hypothesis-Guided Co-Evolution》给出的做法，是把这件事拆成两层：<strong>一个 agent harness 负责推理与决定做什么，一个冻结的视觉语言动作模型负责动手。</strong> 论文报告，在这个任务上，单用被冻结的基础模型是 10.0% 的成功率，套上它的 harness 之后是 90.0%。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">但真正让我想写这篇的不是这个数字，而是它<strong>怎么花试次</strong>。</p>
-<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">一、执行层适配已经解决了一半</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">前面几篇讨论过一个方向：不改模型参数，改模型外面那一层。把冻结的 VLA 降级成可重试的执行原语（第 5 篇），或者让 agent 直接算动作（第 6 篇）。这条路线的好处很直接——<strong>不需要采数据、不需要重训</strong>。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">代价也很直接：<strong>每一次验证都要花真机试次。</strong></p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文的开场就是这个观察。它说，机器人基础模型在物体位置或指令变化时会退化，而继续改进通常要付出真机数据采集与后训练的成本；agentic harness 提供了另一种办法，但<strong>现有的自演化 harness 在「该追哪一项代码或技能的改动」上，对机器人试次的使用不够高效</strong>。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">我读这句话时的理解是：执行层适配把一个工程问题换成了另一个——当改动本身是免费的，被约束的就是<strong>验证的次数</strong>。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">于是问题变成：给你 B 次真机 episode，你怎么花？</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里要先把「改动」具体化，否则后面容易读成抽象讨论。在这类系统里，harness 能改的东西大致有两类：</p>
-<ul style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;"><li>一类是<strong>代码</strong>：比如把「估计杯柄位置」这一步换成更稳的写法、给某个动作加一次校验、调整接近轨迹的控制参数。它改的是某一步怎么做。</li><li>另一类是<strong>技能</strong>：比如把「掀开抽屉把手再拉开」封装成一个可复用的操作，或者给一种新的抓取方式起名字、写清前置条件。它改的是「有哪些动作可以调用」。</li></ul>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">两者都不动模型参数，都只需要在真机上跑几次来验证。所以真正的稀缺资源不是算力、也不是数据，而是<strong>在真实台面上把这件事试几次</strong>。</p>
-<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">二、把 harness 本身写成一个可以被优化的对象</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文先做了一个形式化（§3.1）。跑了 k 次物理 episode 之后，当前的 harness 记作 A_k，它包含四样东西：<strong>可执行的代码、技能、假设集合 H_k、以及累积的记忆 M_k</strong>。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">每一次 episode，系统从候选实验集合里挑一个物理实验去执行：</p>
-<p style="font-size:16.5px;line-height:1.8;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">t*_k = f(T_k, H_k, M_k)</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">执行完拿到物理证据 e_k（执行轨迹与任务结果），harness 更新：</p>
-<p style="font-size:16.5px;line-height:1.8;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">A_(k+1) = g(A_k, t*_k, e_k)</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">目标是：给定 B 次物理 episode 的预算，让最终 harness 的任务成功率最大。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这套写法里有一个判断值得单独拎出来：<strong>「选实验」被写成了一个独立的函数 f。</strong> 换句话说，在这篇论文里，「下一步该试什么」不是实现细节，而是一个显式的、可以被优化的对象。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">目标函数也很直白：给定 B 次物理 episode 的预算，让最终 harness 在 N 次评测 episode 上的成功率最大。这个写法里没有把「模型能力」单独拉出来当变量——模型是给定的、冻结的，唯一能被预算影响的就是 harness 的代码、技能与记忆。<strong>换句话说，这篇论文要证明的不是「模型可以更强」，而是「同样的模型 + 有限的试次，可以被用得更值」。</strong></p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这就是它和第 5 篇的区别。第 5 篇回答的是执行怎么组织；这一篇问的是——组织方式有若干个候选改动，<strong>有限的试次该投给哪一个</strong>。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文把整套系统分成快、慢两个部分，这个划分值得先交代清楚，因为后面的每一节都落在其中一边：</p>
-<ul style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;"><li><strong>快系统（Fast System）</strong>负责与物理世界打交道：从假设出发挑下一次实验、执行、把结果写回假设的置信度，并推动代码与技能的演化。它的节奏是一轮一轮的 episode。</li><li><strong>慢系统（Slow System）</strong>负责把经验整理成以后用得上的东西：维护三层记忆，并决定哪些证据该被保留、合并、抽象、压缩、遗忘或直接跳过。它的节奏是「若干次 episode 之后回看一次」。</li></ul>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">两边的耦合点就是假设与记忆：快系统从记忆里取假设、把新证据写回去；慢系统根据「这些记忆有没有让后面的实验更省更准」来调整自己。</p>
-<img alt="有限的试次，两种花法" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/010/images/fig1_budget_allocation.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 1：同一个试次预算下的两种花法。上图是把试次花在「按顺序试每一种改动」上；下图是先维护一组互相竞争的假设，每次挑能最大程度减少不确定性的那一个去试。图为本文整理，不是论文原图。图：青稞社区绘制。</em></p>
-<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">三、假设图：把「改什么」变成可检验的命题</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">要让「下一次试什么」可计算，先得让候选改动可比较。论文的做法是<strong>假设图</strong>：把「实现某个功能的代码怎么写」「某个技能该怎么定义」都写成假设，作为图中的节点；当证据支持一个更具体的版本时，用一条 <strong>refines 边</strong>把原假设连到它的修订版。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">每个假设带一个置信度。论文用 Beta(α, β) 作为支持率的先验（α、β 分别对应先验的支持与反驳计数），用 n_sup 记录支持它的实验数、n_ref 记录不一致的结果数，后验均值为：</p>
-<p style="font-size:16.5px;line-height:1.8;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">c_i = (n_sup,i + α) ÷ (n_sup,i + n_ref,i + α + β)</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里有个细节我认为是整篇论文最讲究的一处：更新假设时用的是<strong>匹配试次（matched trials）</strong>——固定初始状态、固定其它调用及其顺序，只比较成功率差。论文明确写出这一点，是因为在真机上「这次成了」和「上次没成」之间可能夹着十几个变量；不把变量按住，证据就不成立。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">有了置信度，还缺一个「该去补哪块证据」的度量。论文把探索不确定度定义成各假设支持率熵之和 H_exp = Σ h₂(q_i)，其中 q_i 是「该假设支持率大于二分之一的概率」。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>到这里，「哪里还不确定」变成了一个可以算的数。</strong> 这是后面一切的前提。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">用信息论给「还缺哪块证据」定量，本身不算新做法；把它落到机器人试次上的难点在别的地方——<strong>怎么让每一次试次真的只检验一个假设</strong>。论文在这里给出的答案前面提过：匹配试次要在固定初始状态、固定其它调用及其顺序的前提下比较成功率。我认为这是整篇论文里最容易被跳过、但对复现最要命的一条：</p>
-<ul style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;"><li>真机实验里，「这次成了」和「上次没成」之间可能同时变了好几个东西——物体摆位、光照、抓取姿态，甚至操作者手抖的程度。这些变量不按住，得到的差值就同时包含了它们；</li><li>按不住的结果会让假设的置信度沿着错误的方向更新，而这套系统后面所有的决策，都建立在这些置信度上。<strong>错误证据的代价不是这一次试次，而是它把后续的实验选择也带偏了。</strong></li></ul>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">换句话说，假设图这套东西能不能转起来，取决于实验能不能被做成「可比较的」。这也解释了成本公式里为什么会有「场景重置」这一项——为了让两次实验可比，得把场景摆回去。</p>
-<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">四、下一次试什么：信息价值除以成本</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">候选实验是那些能更新一组假设置信度的匹配试次。论文给每个实验算一个价值：执行它之后，探索不确定度的<strong>期望下降</strong>：</p>
-<p style="font-size:16.5px;line-height:1.8;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">G_k(t) = H_exp(D_k) − E_e[ H_exp(D_k ∪ {e}) | D_k, t ]</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">也就是经典的<strong>信息价值</strong>（value of information）。但只按信息量排序不够——真机上不同的实验贵得不一样。所以论文又给实验定义一个成本：</p>
-<p style="font-size:16.5px;line-height:1.8;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">C(t) = w_τ · T_t + w_s · N_step,t + w_g · C_GPU,t + w_r · C_reset,t</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">四项分别是耗时、仿真步数、GPU 开销与场景重置开销（权重由设计者设定）。最终的打分是两者相除，取最大者作为下一次实验：</p>
-<p style="font-size:16.5px;line-height:1.8;margin:0 0 18px;text-align:center;font-family:Georgia,'Times New Roman',serif;">VOI_k(t) = G_k(t) ÷ C(t)，t*_k = arg max_t VOI_k(t)</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">我喜欢这个设计的地方在于<strong>比例而不是加法</strong>。如果写成「信息增益减去成本」，两个量纲不同的东西要凑到一个尺度上；写成比值，则默认了「同样一份不确定性的减少，值得花多少代价去换」——对真机实验来说，这是更自然的表述。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">另外值得一提的是成本里那一项「场景重置开销」。把「把场景摆回去要多久」写进实验成本，说明这套系统是照着真机上反复重摆桌面的现实来设计的。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把这套打分和「按顺序把每种改动都试一遍」放在一起看，差别就很清楚了。后者不区分改动之间<strong>谁更可能带来新信息</strong>：已经确认有效的方向还会被反复验证，而真正悬而未决的那个假设可能一直排在队尾。VOI 打分做的正是把「哪个改动还没被证清楚」顶到前面去。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里也有一个我认为需要留意的隐含前提：<strong>这套做法假定「不确定性可以被诚实地排在同一个尺子上」。</strong> 熵是对所有假设一视同仁算出来的，但不同的假设失败起来的后果并不一样——有些改动就算错了也只是多花几秒，有些可能让机械臂撞上台面。论文的成本项覆盖的是实验开销，不是风险；在真机上，这两件事显然不完全一样。</p>
-<img alt="从假设到下一次实验" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/010/images/fig2_hypothesis_voi.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 2：假设图、Beta 置信度与探索不确定度（熵）之间的关系，以及「期望不确定度下降 ÷ 实验成本」如何给出下一次实验的选择。图为本文整理。图：青稞社区绘制。</em></p>
-<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">五、代码和技能要一起改</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">可选的动作有两类：改<strong>代码</strong>（把某一步实现得更稳、更快），或者改<strong>技能</strong>（定义一个新的可复用操作）。论文把两者放在同一个循环里共同演化，并做了一个消融来回答「一起改到底有没有用」。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文在 RoboCasa365 上固定冻结的 VLA、任务套件、物理实验预算与评测协议，比较三种设置：只改代码、只改技能、两者都改。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">结果里有一个我认为比结论本身更有意思的现象：<strong>只改代码在 Atomic-Seen（单个已见任务）上比只改技能更好，但到了 Composite-Unseen（把技能组合成训练里没出现过的任务），排序反转了。</strong> 在 Composite-Unseen 上，代码加技能共同演化是 71.3%，只改技能是 55.6%。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文自己的解读是：<strong>对熟悉的原子任务有效的改动，未必能带到没见过的组合上去。</strong> 我把这句话读成一条更一般的经验：在执行层做适配时，「调好一个任务」和「让这层能力可组合」是两个不同的目标，而它们的优选项可能相反。这也解释了为什么共同演化在两个套件上都领先——它同时承担了这两种压力。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">为什么两类改动会有这种差别，论文没有给机制层面的解释，但现象本身符合直觉：改代码是在<strong>已有动作</strong>的层面做局部修正，很容易在一个具体场景里见效，代价是这种修正往往贴着当次实验的细节；改技能是在<strong>动作的词汇表</strong>层面做增补，短期内对单个任务的收益不一定明显，但它增加了可以被重新组合的部件。而论文前面已经写过，Composite-Unseen 考察的正是「技能都见过、组合没见过」——在这样的任务上，词汇表的收益会显出来。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个消融还有一层方法论上的价值：它展示了一个<strong>三档对照</strong>该怎么设计——固定冻结的 VLA、任务套件、物理实验预算与评测协议，只动「改哪一类」。在这条线上（harness 改的是代码与技能），这类对照其实很难做，因为变量天然很多。</p>
-<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">六、记忆不是仓库，而是一组动作</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这篇论文里最容易被低估的部分是记忆。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">它把记忆分成三层：<strong>M1 记录物理执行</strong>（执行轨迹、调用了哪些工具、VLA 在哪几步被调用、动作、遥测、结果与奖励），<strong>M2 维护代码与技能假设</strong>，<strong>M3 保留从反复出现的证据里提炼出来的可复用认知</strong>。M1 自动记录每一次 episode，并为 M2 的计数与关系更新提供匹配证据；跨 episode 时，慢系统会把反复出现的 M1、M2 证据抽象成 M3。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">真正有意思的是：<strong>记忆的写入不是规则，而是被训练的策略。</strong> 论文定义了六种记忆动作——<strong>保留（Retain）、合并（Merge）、抽象（Abstract）、压缩（Compress）、遗忘（Forget）、跳过（Skip）</strong>。系统用冻结的编码模型把当前经验、检索到的记录与动作描述编码成状态，再由一个可训练的策略在其中做选择；被选中的动作交给一个冻结的 operator 模型去真正更新检索索引或 M3。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">策略怎么训？用 PPO，奖励由三部分加权组成：<strong>成功率的提升、探索不确定度的下降、以及下一次实验的成本（作为惩罚）</strong>。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">我很在意这个设计里的一个取舍：<strong>奖励里没有「记忆本身的质量」这一项。</strong> 记忆好不好，只通过它有没有让后面的实验更省、更准来体现。这等于承认：对机器人来说，记忆的价值不是「记得完整」，而是「能让下一次更划算」。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">六种记忆动作里，最值得琢磨的是<strong>遗忘与跳过</strong>。一般的「记忆系统」讨论默认保留是好事、遗忘是损失；但在这里，遗忘和跳过是被显式允许、并且由策略自己选择的动作。原因不难理解：检索是有成本的，而一个过时的、已经被后续证据推翻的假设如果一直留在索引里，会在下一次选实验时把系统重新拉回已经走过的弯路。<strong>在这个框架里，遗忘是一种节省，而不是一种损失。</strong></p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">另外两个细节也值得一提。编码用的是冻结的 Qwen3-Embedding-0.6B，真正执行检索索引或 M3 更新的是冻结的 Qwen3.5-122B-A10B——也就是说，<strong>两个大模型都冻结，被训练的只有「选哪个记忆动作」这一层小策略</strong>，它由 PPO 按折扣回报来优化。这套安排把「记忆管理」变成了一个参数量很小、目标很明确的学习问题：不去学怎么理解世界，只学「现在该动哪条记忆」。</p>
-<img alt="分层记忆与六种记忆动作" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/010/images/fig3_memory_actions.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 3：M1 执行记录、M2 假设图、M3 可复用认知三层结构，以及六种记忆动作；记忆策略的奖励由成功率提升、不确定度下降与下一次实验成本三部分构成。图为本文整理。图：青稞社区绘制。</em></p>
-<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">七、结果：两组仿真、一组真机、一条学习曲线</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文报告的成绩分四块。我把条件和数字一起抄下来，因为这里的每一条都带着自己的协议。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>RoboCasa365</strong>（家庭场景的移动操作，含三个套件）：总体 77.0%，其中 Atomic-Seen 94.4%、Composite-Seen 63.1%、Composite-Unseen 71.3%。论文指出 Composite-Unseen 是最严格的评测——技能都见过，但组合方式是训练里没有的；在这个套件上，论文报告的对比最佳基线是 Harness VLA 的 40.1%。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>LIBERO-Pro</strong>（指令重定向与位置交换两类扰动）：总体 86.8%，论文报告的 Harness VLA 是 72.1%，并称在全部八个扰动单元上都领先。论文特别指出差距最大的是 SPATIAL 与 LIBERO-10 的<strong>位置交换</strong>情形——也就是物体摆位变了的时候。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>真机</strong>：SO-101 机械臂 + 冻结的 SmolVLA。基础模型先用每个任务 50 条人类遥操作演示做了 20000 步全量微调（4×H200），评测期保持冻结；每任务跑 30 次试次。五个任务的整体成功率从 46.0% 提升到 71.3%。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>学习效率</strong>：在 50 个物理 episode 之后，论文报告总体成功率 72.9%、学习 AUC 0.635；随机探索是 27.1% 与 0.309。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把表 1 里的对照方法按类型排一下，更容易看清论文想说明什么。从 π0（总体 14.8%）到 Harness VLA（63.6%）这一串，大致按「冻结 VLA → 加世界模型 → 加 harness」的方向递增；而同一张表里，论文的方法在 Atomic-Seen 上只比 Harness VLA 高 3.1 个百分点（94.4% 对 91.3%），在 Composite-Unseen 上却高出 31.2 个百分点（71.3% 对 40.1%）。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>这个「原子任务上差不多、组合任务上拉开」的形状，比总体数字更有信息量。</strong> 它指向这类方法的适用面：当任务就是把已经训好的动作再做一遍时，模型本身已经够用，harness 能加的有限；真正需要 harness 的地方，是把会做的事重新组织成没做过的事。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">仿真之外，真机那五个任务按能力分成三类：多步操作（叠蛋糕、折毛巾）、语义与算术推理（放 Oreo、选扑克牌）、精细抓取（提起眼镜桥）。论文特别点出扑克牌那一项的增益来源——harness 先从算术指令里算出该拿哪张，再去指挥冻结的 SmolVLA，而牌的顺序与朝向每次都会被打乱。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">LIBERO-Pro 那一侧也有一个值得记的细节：论文说差距最大的单元格出现在 SPATIAL 与 LIBERO-10 的<strong>位置交换（S）</strong>情形。指令重定向（T）改的是「让它做什么」，位置交换（S）改的是「东西在哪」——后者更贴近真机落地时最常见的那种变化。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">同一张表里还有一组值得注意的分布：同为「不改模型」的路线，论文报告 CaP-X 是 18.2%、RATS 是 43.8%、Harness VLA 是 72.1%、Zetta 是 71.1%，而不再改模型的路线（π0、π0.5 等）多在 0 到 11% 之间。<strong>这条分布本身说明：在「指令与位置都被扰动」的设置下，光靠冻结的基础模型几乎做不了事，而加上一层代码 / harness 之后，成绩跳到了另一个区间。</strong></p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">记忆那一块也做了消融。论文比较了三档：检索式记忆 61.7%（学习 AUC 0.556）、只用任务奖励的 PPO 65.2%（AUC 0.589）、以及完整方法 71.3%（AUC 0.635）。这个阶梯的形状值得记一句——<strong>用任务奖励直接训练记忆策略，已经比「按相似度检索」好一档；再把不确定度下降与实验成本纳入奖励，又多出一档。</strong> 论文没有给出更细的拆解（比如只加成本项、不加熵项会怎样），所以这三档之间的因果顺序只能读到「每一层都有贡献」，读不到「哪一层贡献最大」。</p>
-<img alt="三组评测与一处反向结果" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/010/images/fig4_results.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 4：论文报告的三组结果——RoboCasa365 的三个套件、LIBERO-Pro 总体、真机五个任务（含总体），以及 50 个 episode 后的学习效率对照。图中数字均来自论文 Table 1–4；真机部分单独标出了唯一一处下降的任务。图为本文整理。图：青稞社区绘制。</em></p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里必须单独说一个反向结果：真机五项任务里，<strong>眼镜桥式抓取这一项在套上 harness 之后反而从 60.0% 降到 56.7%</strong>。其余四项上升（其中扑克牌选数从 10.0% 到 90.0%、折毛巾从 26.7% 到 46.7%）。论文没有对这一处下降给出专门解释。我把它写出来，是因为一张只报总体的成绩单会把「并非每个任务都变好」这件事盖掉。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">关于「学习效率」那组数字，还有一层需要说明：论文用的随机基线是<strong>随机选择代码与技能实验</strong>，它没有任何先验或启发；因此 72.9% 对 27.1% 的差距，说明的是「有定向的实验选择明显优于无定向」，而不是「这套方法已经接近最优」。</p>
-<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">八、这套东西的边界</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">读完这篇论文，我认为有四条边界必须和结论一起记住。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第一，它不改基础模型。</strong> 论文在结论里自己把这点列为限制：这类方法（code-as-policy 与 agentic harness）从物理轨迹里学到的是可执行行为，而不更新机器人基础模型的参数；作者提出的下一步是<strong>把 harness 选出的轨迹用于在线模型更新，让代码、技能和模型一起变好</strong>。这句话其实承认了一件事：现在的「持续学习」发生在模型外面。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把这条读完整一点：论文的方法确实在持续学习——但它学习的对象是代码、技能与记忆，而不是权重。好处是改动可读、可回滚，也不必为每个新环境重训；代价是模型本身的视觉运动能力并不会因为多跑了几十个 episode 而变强，它只是被更聪明地调度了。<strong>这条线上的所有增益，都要放在这个前提下读。</strong></p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第二，真机的验证规模不大。</strong> 五个任务、每任务 30 次试次。表里出现的每个百分比，一步就是 3.3 个百分点，这个量级下任务间的差异很难用来做精细排序。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第三，对比数值的来源需要保守对待。</strong> 表 1、表 2 里那些对照方法（包括几个开源 VLA 和另外几套 harness）的数字，论文没有逐项说明是自报还是作者复现。我在这里一律按「论文报告」处理——把它们的差距读成「这条路线值得跟进」，而不是「同一协议下的确定排序」。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第四，「Physical Aha Moment」还不是一个被确立的机制。</strong> 论文引用了这个概念（agent 找到让 VLA 回到分布内的那个关键物理状态变量），并用一个 LIBERO-Pro 的案例展示：它的 VOI 选择在 50 个物理 episode 内把八 episode 滚动成功率推到 100% 并保持，而随机选择到第 100 个 episode 还在波动、结束时约 75.0%。这是一个很有画面感的案例，但它是<strong>单一案例的曲线</strong>，还不能当成机制层面的证据。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">还有两条更实际的边界，论文没有强调，但对打算复现的人更要紧。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">一是<strong>成本权重的选择本身是个设计决策</strong>。式子里那四项成本（耗时、仿真步数、GPU、场景重置）怎么加权，直接决定系统在「多花时间做一次干净实验」和「将就着多试几次」之间怎么取舍。论文把权重写成可调参数，这意味着换一套硬件、换一个更贵的仿真器，策略行为会跟着变——<strong>同一套方法在不同实验室里的实际表现，未必一致。</strong></p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">二是<strong>演化协议与评测协议是分开的</strong>。论文写得很清楚：演化用 10 个种子，评测用另外 10 个互斥种子。这一条在 harness 类工作里很关键——如果演化和评测用同一批种子，学到的东西就有机会贴着评测集，结果就不可信了。论文把这一步分开，是这篇工作里我认为最扎实的一处设计。</p>
+<img alt="封面：试次预算下的四个环节" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/010/images/cover_notebook.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>封面：从试次预算到假设图、实验打分与下一次实验。编辑部推演图，非论文插图。图：青稞社区绘制。</em></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">开场：一道算术题，和它要花的试次</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">桌面上散着几张扑克牌，机器人要挑出「数值乘以五等于一百」的那张。难的地方不在抓取：牌的顺序和朝向每次都被打乱，模型得先在当前画面里完成一次语义与算术推理，才知道该动哪一张。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">2026 年 10 月的论文《EmbodiedRSI: Active Continual Robot Learning Through Hypothesis-Guided Co-Evolution》给这类任务换了一种组织方式：一个 agent harness 负责推理与决定做什么，一个冻结的视觉语言动作模型负责动手。在这个任务上，论文报告单用被冻结的基础模型是 10.0% 的成功率，套上 harness 之后是 90.0%（arXiv:2610.10498v1，Table 3，每任务 30 次试次）。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个数字容易让人把注意力放在「harness 有用」上。我想在这篇文章里追另一个问题：<strong>在模型冻结、改动免费的前提下，稀缺的是真机试次——那这篇论文怎么决定把试次花在哪里？</strong></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">一、旧方案背着的三个包袱</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">要看清这篇改了什么，先得看执行层适配原本要背什么。把冻结的 VLA 降级成可重试原语、让 planner 与记忆接管执行，这条路线（本系列第 5 篇讨论过）确实绕开了重训，但它把三样东西留在原地：</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>包袱一：改动候选是人工列出来的。</strong> 系统能改代码、能改技能定义，但「这一轮该改哪一处」通常由人写规则或按启发式排序。代价是改动空间一大，就没人能说清哪些方向已经被试过、哪些还没被试过。与本文的关系：这篇要把「改什么」变成可维护的假设集合。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>包袱二：每一次验证都要花真机试次。</strong> 改动本身不需要训练，可验证改动只能在物理世界里做。试次一旦被消耗在已经确认有效的方向上，就无法回收。与本文的关系：这篇要把试次当预算来分配。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>包袱三：经验留在轨迹里，没有分层。</strong> 之前的工作把执行轨迹、失败原因、可复用的结论混在同一处记录里，下一次检索时三者互相干扰。与本文的关系：这篇要把记忆按用途分层，并让「该保留什么」由策略决定。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文对同行的判断也写在同一处：现有自演化 harness「在决定追哪一项代码或技能改动时，使用机器人试次不够高效」（arXiv:2610.10498v1，Abstract）。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">三个包袱指向同一件事：<strong>执行层的适配把「改什么」交给了人，把「验什么」交给了运气。</strong> 代码和技能都能自由修改，代价是改动空间一旦变大，既没人维护「哪些方向已经试过」，也没有机制保证下一轮试的是最不确定的那一项。这篇论文的四组机制，恰好分别对应这三个包袱。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这条路线之所以值得投入，前提也很清楚：<strong>重新训练一个基础模型的成本远高于改一层代码。</strong> 现场换一批物体、换一种摆位，团队能立刻做的是调整调用与参数，而不是立刻启动一次数据采集加训练。论文要处理的是这条路线的次生问题——当改动免费时，如何避免把试次浪费在重复验证上。</p>
+<img alt="同一个试次预算，两种花法" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/010/images/fig1_budget_allocation.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 1：同一个试次预算下的两种花法。上：按固定顺序试改动；下：先维护互相竞争的假设，再按「期望不确定度下降 ÷ 实验成本」挑下一次实验。这是本刊用来定位这篇论文的分析框架，不是论文原图。图：青稞社区绘制。</em></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">二、这篇换的那一层：把「选实验」写成函数</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文先做了一个形式化，把 harness 本身当作可被优化的对象。跑过 k 次物理 episode 之后，当前 harness 记作 A_k，包含四样东西：可执行的代码、技能、假设集合 H_k、累积记忆 M_k。每一次 episode，系统从候选实验集合里挑一个物理实验：</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">$$t*_k = f(T_k, H_k, M_k)$$</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">执行完得到物理证据 e_k（执行轨迹与任务结果），harness 随之更新：</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">$$A_(k+1) = g(A_k, t*_k, e_k)$$</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">目标是让最终 harness 在 N 次评测 episode 上的任务成功率最大，而它只有 B 次物理 episode 的预算可以花。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个目标函数里没有「模型能力」这一项，因为模型是给定的、冻结的。能被预算影响的只有 harness 的代码、技能与记忆。所以这篇论文要说明的事，落在<strong>同一个模型加有限的试次能不能被用得更值</strong>上，而不是模型本身能不能更强。候选实验集合 T_k 由当前假设与记忆决定：能更新某组假设置信度的匹配试次才会进入候选。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个写法把「下一步该试什么」从实现细节提升成了一个独立的函数 f。对做系统的人，它的含义是可验证的：<strong>如果选实验的策略可以被单独替换，那么「试次分配」就有了自己的评测面</strong>——固定冻结的模型、任务与预算，只替换 f，就能测出分配策略本身值多少。论文后面那组与随机探索的对照，用的正是这个切口。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文把系统分成两边：<strong>快系统</strong>（Fast System）从假设出发挑实验、执行、把结果写回置信度，并推动代码与技能演化；<strong>慢系统</strong>（Slow System）维护三层记忆，决定哪些证据该保留、合并、抽象、压缩、遗忘或跳过。两边的接口是假设与记忆。</p>
+<img alt="EmbodiedRSI 总览" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/010/images/rsi_fig2_overview.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 2：论文给出的系统总览——左侧快系统（假设与 VOI、代码-技能共演化、物理试验），中间分层记忆，右侧慢系统（闭环奖励、记忆动作、operator）。来源：Song et al., arXiv:2610.10498v1, Fig. 2。</em></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">三、机制一：假设图，把「改什么」变成可检验的命题</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">要让「下一次试什么」可计算，候选改动先得可比较。论文用一张<strong>假设图</strong>来装它们：代码改动（C 节点）与技能改动（S 节点）都是图中的节点，各自带一条指向修订版本的 <strong>refines</strong> 边；随着物理证据积累，原本悬着的代码-技能关联会被确认成 works-with 关系。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">每个假设的置信度用一个 Beta 先验维护：α、β 是先验的支持与反驳计数，n_sup 记录支持它的实验数，n_ref 记录不一致的结果数，后验均值为</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">$$c_i = (n_sup,i + α) ÷ (n_sup,i + n_ref,i + α + β)$$</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">置信度只回答「这个假设被支持到什么程度」。要决定下一次试什么，还需要一个「哪里还不确定」的度量——论文把探索不确定度写成各假设支持率熵之和 H_exp = Σ h₂(q_i)，其中 q_i 是「该假设支持率大于二分之一的概率」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">假设不是人写好的固定清单：每一条执行轨迹与结果都会用来生成新的代码/技能假设，或者把旧假设细化成更具体的版本（也就是 refines 边上那些新节点）。新假设刚出现时置信度低、不确定性高，正因为如此，一个匹配试次在检验旧假设的同时，也顺手给新假设提供了初始证据。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">从使用者角度看，这套记账方式带来一个实际好处：<strong>每次实验之后，系统能说出「这条假设现在被支持到什么程度」</strong>，而不是只留一段成功或失败的记录。一条差到某个阈值的假设可以被明确排除，不用再占用下一轮的实验名额。相反，如果只记录「试过、没成」，团队很难区分「这条路错了」和「这次手抖了」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">代价是把匹配试次做成真正可比较的实验。要固定初始状态，意味着场景要能被摆回原样；要固定其它调用与顺序，意味着这一次试验除了被检验的那一处，别的代码路径不能动。这两条都是人工约束，也解释了这套系统为什么需要一个「场景重置」成本项。</p>
+<img alt="假设图在物理试验前后的变化" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/010/images/rsi_fig3_hypothesis_graph.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 3：论文给出的假设图更新示意。上排是代码节点、下排是技能节点，实线为 refines（版本历史），虚线为候选的代码-技能关联；右侧是试验之后被确认的 works-with 关系。来源：Song et al., arXiv:2610.10498v1, Fig. 3。</em></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里有一个容易被跳过的工程前提：更新假设用的是<strong>匹配试次</strong>——固定初始状态、固定其它调用及其顺序，只比较成功率差（arXiv:2610.10498v1，§3.2）。真机上「这次成了、上次没成」之间可能同时变了摆位、光照、抓取姿态；这些变量不按住，差值就不可归属于那条假设。按不住还有一个更贵的后果：<strong>置信度会沿错误方向更新，而后面所有决策都建立在这些置信度上</strong>。错误证据的代价不止那一次试次，还把后续的实验选择一起带偏。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">四、机制二：信息价值除以成本</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">候选实验是那些能更新一组假设置信度的匹配试次。论文给每个实验算一次<strong>信息价值</strong>：执行它之后，探索不确定度的期望下降</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">$$G_k(t) = H_exp(D_k) − E_e[ H_exp(D_k ∪ {e}) | D_k, t ]$$</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">只按信息量排序还不够，真机上不同实验贵的程度不同。论文另外定义实验成本，由四项加权组成：</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">$$C(t) = w_τ · T_t + w_s · N_step,t + w_g · C_GPU,t + w_r · C_reset,t$$</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这四项分别是耗时、仿真步数、GPU 开销与场景重置开销。最终打分是两者相除，取最大者作为下一次实验：</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">$$VOI_k(t) = G_k(t) ÷ C(t)，t*_k = arg max_t VOI_k(t)$$</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">写成比值而不是相减，对真机实验更自然：它默认了「同样一份不确定性的减少，值多少代价」。我在这里留意到的是成本里的最后一项——把「把场景摆回去要多久」算进实验成本，意味着这套系统的默认场景是在真实工作台旁边反复重摆，而不是跑一次大评测。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把这套打分和「按顺序把每种改动都试一遍」放在一起看，差别就清楚了：后者不区分哪一项还没被证清楚，已经确认有效的方向还会被反复验证，而没被证清楚的假设可能一直排在队尾。VOI 打分做的正是把「哪个改动还没被证清楚」顶到前面去。还有一个隐含前提值得留意——<strong>熵对所有假设一视同仁，但不同假设失败起来的后果并不一样</strong>：有的改动错了只是多花几秒，有的可能让机械臂撞上台面。成本项覆盖的是实验开销，不是风险。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">对打算在自己平台上跑这套东西的人，这一层还有两个可操作的后果。第一，<strong>候选实验的构造决定了整套系统的天花板</strong>：如果候选集合里根本没有「能区分这两条假设」的那一类实验，打分再准也选不出有用的试次。第二，<strong>成本权重决定系统的性格</strong>：把重置开销调高，系统会更倾向一次做干净的实验；调低，它会接受更多「将就着试」的快速迭代。这两种性格在不同平台上都可能合理，但它们不是同一套方法。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">对使用者来说，这一层有一个直接的后果：<strong>成本权重是可以调的</strong>，换一套硬件或换一个更贵的仿真器，策略行为会跟着变；同一套方法在两间实验室里的表现未必一致。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">五、机制三：代码与技能为什么要一起改</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">可选的动作分两类：改<strong>代码</strong>（把某一步实现得更稳、更快），或改<strong>技能</strong>（定义一个新的可复用操作）。论文让两者在同一个循环里共同演化，并做了三档消融：固定冻结的 VLA、任务套件、物理实验预算与评测协议，只动「改哪一类」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">结果是这篇论文里最值得记的一处反直觉现象：<strong>只改代码在 Atomic-Seen（单个已见任务）上比只改技能更好，但到了 Composite-Unseen（把技能组合成训练里没出现过的任务），排序反转了。</strong> 在 Composite-Unseen 上，代码加技能共同演化是 71.3%，只改技能是 55.6%（arXiv:2610.10498v1，§4.4 与 Fig. 6）。反转条件很清楚：<strong>任务从「复现单个已见动作」变成「组合出没见过的任务」时，词汇表层面的增补比局部修正更划算。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">反转的走向也要看清：两个设置各自在一类任务分布上领先，谁都没有整体优势。这类结果容易被压成一句「联合演化最好」，而论文自己的数据说的是另一回事——<strong>联合演化的好处在于它在这两类任务上都不掉队。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文没有给机制层面的解释，但现象本身符合直觉。改代码是在已有动作的层面做局部修正，容易在一个具体场景里见效，代价是这种修正往往贴着当次实验的细节；改技能是在动作词汇表层面做增补，短期收益不明显，却增加了可以被重新组合的部件。Composite-Unseen 考的正是组合。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这个消融还解决了一个方法上的问题。在执行层做适配时，变量天然很多（模型、任务、预算、评测都能动），要做单变量对照并不容易。论文把冻结的 VLA、任务套件、物理实验预算与评测协议全部固定，只让「改哪一类」变化，三档结果才有可比性。对打算复现这条路线的人，这个对照设计比它的数值更值得抄走。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">六、机制四：记忆不是仓库，而是一组动作</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">慢系统把记忆分成三层：<strong>M1 记录物理执行</strong>（执行轨迹、调用了哪些工具、VLA 在哪几步被调用、动作、遥测、结果与奖励），<strong>M2 维护代码与技能假设</strong>，<strong>M3 保留从反复证据里提炼的可复用认知</strong>。M1 自动记录每一次 episode，并为 M2 的计数与关系更新提供匹配证据；跨 episode 时，慢系统把反复出现的 M1、M2 证据抽象进 M3。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">M1 的字段构成值得单独看一眼，因为它决定了后面能做哪些统计：轨迹、调用的工具集合、调用 VLA 的时间步、执行的动作、遥测、物理结果与任务奖励（arXiv:2610.10498v1，Eq. 8）。<strong>「调用 VLA 的时刻」被单独记下来</strong>，意味着系统能区分「这一步是模型给的」还是「这一步是程序算的」，这是后面做代码与技能归因的前提。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">记忆的写入方式更值得琢磨：写入规则本身也是学出来的。动作空间有六种——<strong>保留、合并、抽象、压缩、遗忘、跳过</strong>。系统把当前经验、检索到的记录与动作描述编码成状态，由可训练的策略在其中选择，被选中的动作交给一个冻结的 operator 更新检索索引或 M3；策略用 PPO 训练，奖励为成功率提升、探索不确定度下降与下一次实验成本的加权组合（arXiv:2610.10498v1，§3.3 与 Eq. 10）。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">奖励里没有「记忆完整度」这一项。记忆好不好，只通过它有没有让后面的实验更省、更准来体现。这等于在说：对机器人来说，记忆的价值来自让下一次更划算，记得全只是手段。顺着这个逻辑，<strong>遗忘和跳过在这套框架里是一种节省</strong>——一条已被后续证据推翻的假设留在索引里，会在下一次选实验时把系统拖回走过的弯路。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">六种动作各自解决一个具体问题：<strong>保留</strong>是默认路径，把当次经验写进对应层级；<strong>合并</strong>把两条指向同一结论的记录并成一条，减少重复检索；<strong>抽象</strong>把多条 M1 证据提炼成 M3 层面的可复用结论；<strong>压缩</strong>在保留结论的前提下丢掉冗余细节；<strong>遗忘</strong>删掉已被后续证据推翻的记录；<strong>跳过</strong>则是在这一轮什么都不做。前四种增加记忆的可用性，后两种控制它的成本——这套动作空间的设计取向很清楚：<strong>记忆的价值由「它让未来的实验便宜了多少」来定义，而不是由覆盖率定义。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">另外两个实现细节也影响可复现性：编码用的是冻结的 Qwen3-Embedding-0.6B，执行知识更新的是冻结的 Qwen3.5-122B-A10B。<strong>两个大模型都冻结，被训练的只有「选哪个记忆动作」这一层</strong>。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">它的训练信号来自后面几次实验的好坏：奖励由成功率提升、探索不确定度下降与下一次实验成本三项加权组成，然后用 PPO 优化折扣回报（arXiv:2610.10498v1，Eq. 10）。<strong>记忆策略不直接看「记住了多少」，只看它有没有让后面的实验更省、更准</strong>——这一点决定了整套系统在长跑里的行为：一条记错方向的结论会被后续的负奖励慢慢压掉，而不是永久留在库里。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">七、结果：协议先说，再给数字</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">在给数字之前，先把协议摆出来，因为后面每一组数字都只在这个协议里成立。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>仿真</strong>：两套 benchmark。RoboCasa365 考查家庭场景下的移动操作泛化，分 Atomic-Seen（单个已见任务）、Composite-Seen（组合方式见过）、Composite-Unseen（组合方式没见过）三个套件；LIBERO-Pro 考查指令重定向（T）与位置交换（S）两类扰动，各四个任务族。每个任务 10 个随机种子、每个种子 10 次试次；<strong>演化用 10 个种子，评测用另外 10 个互斥种子</strong>（arXiv:2610.10498v1，§4.1）。种子分开这一条在 harness 类工作里很关键：如果演化和评测共用种子，学到的东西有机会贴着评测集。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">对照方法分三类：端到端冻结 VLA（π0、π0.5、OpenVLA、RLDX-1、NORA、MolmoAct、X-VLA、AtomVLA、πRLinf）、一个世界模型基线（WorldDreamer）、以及同样「用冻结 VLA + 代码/harness」的路线（CaP-X、RATS、Harness VLA、Zetta），另有一个榜单条目（Xiaomi-Robotics-1）。后一类是这篇论文要对话的对象，前三类的数字主要用来标出「不改模型能做到哪一档」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>真机</strong>：SO-101 机械臂 + 冻结的 SmolVLA。基础模型先用每个任务 50 条人类遥操作演示做 20000 步全量微调（4×NVIDIA H200），评测期保持冻结；每个任务 30 次试次。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">在这个协议下，论文报告的 RoboCasa365 总体成功率是 77.0%，其中 Atomic-Seen 94.4%、Composite-Seen 63.1%、Composite-Unseen 71.3%；它对比的 Harness VLA 在同一张表里是 91.3 / 55.8 / 40.1，总体 63.6%（Table 1）。把这四组数并排看，形状比总差值更有信息量：<strong>Atomic-Seen 上两者只差 3.1 个百分点，Composite-Unseen 上差 31.2 个百分点。</strong> 当任务是把已经训好的动作再做一遍时，模型本身已经够用；真正需要这层 harness 的地方，是把会做的事重新组织成没做过的事。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">LIBERO-Pro 上论文报告总体 86.8%，同表里 Harness VLA 72.1%、Zetta 71.1%、RATS 43.8%、CaP-X 18.2%，而不改模型的几个 VLA 总体在 0–11% 之间（Table 2）。差距最大的单元格出现在 SPATIAL 与 LIBERO-10 的位置交换情形——改「东西在哪」比改「让它做什么」更难，这一点和真机落地时的直觉一致。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">同一张表还能读出一条分布：同为「不改模型」的路线，成绩从 CaP-X 的 18.2% 到 Harness VLA 的 72.1% 跨了一大段。<strong>这条跨度的存在说明，在「指令与位置都被扰动」的设置下，冻结的基础模型只是起点，决定成绩的是模型外面那一层怎么写。</strong> 论文的 86.8% 落在这条分布的最右端，但它与 72.1% 之间只差 14.7 个百分点，而两者用的基准模型与任务集并不完全相同——这一档差距需要在同一协议下再验一次才算数。</p>
+<img alt="RoboCasa365 的三个任务套件" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/010/images/rsi_fig4_robocasa_suites.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 4：论文给出的 RoboCasa365 任务套件示例（Atomic-Seen / Composite-Seen / Composite-Unseen）。来源：Song et al., arXiv:2610.10498v1, Fig. 4。</em></p>
+<img alt="真机五任务的初始场景、接近与目标状态" src="https://qingkelab.github.io/qingke-embodied-ai-pages/article/010/images/rsi_fig5_real_robot.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 5：论文给出的真机任务三连图（放 Oreo、选扑克牌、叠蛋糕）。每张图从左到右是初始场景、机器人接近、目标状态。来源：Song et al., arXiv:2610.10498v1, Fig. 5。</em></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">真机五个任务里，整体成功率从 46.0% 提升到 71.3%（Table 3）。分项是：放 Oreo 70.0% → 86.7%，选扑克牌 10.0% → 90.0%，叠蛋糕 63.3% → 76.7%，<strong>提眼镜桥 60.0% → 56.7%</strong>，折毛巾 26.7% → 46.7%。第四项是唯一一处下降，论文没有专门解释它。按 30 次试次算，这里一个百分点约等于 0.3 次试次，任务之间的细微差别不该被过度解读。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">学习效率那一组同样要看协议：50 个物理 episode 之后，论文报告总体成功率 72.9%、学习 AUC 0.635，而对照的随机探索是 27.1% 与 0.309（Table 4）。随机基线是「随机选择代码与技能实验」，没有任何先验或启发。<strong>所以这组数字说明的是定向选择明显优于无定向，说明不了这套方法已经接近最优。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">消融还有一处值得记：记忆部分的三档对照是检索式 61.7%（AUC 0.556）、只用任务奖励的 PPO 65.2%（0.589）、完整方法 71.3%（0.635）。阶梯的形状说明每一层都有贡献，但论文没有再往下拆（例如只加成本项、不加熵项会怎样），所以读不到哪一层贡献最大。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把这几组数字放回工程语境，会看到成本结构的两面。省下来的是数据采集与重训：真机上只需要跑几十次试次，基础模型一次微调之后就固定不动。花掉的是另一头的开销：每次实验要重置场景、要有人盯着判定结果，而论文报告的学习效率（50 个 episode 达到 72.9%）意味着这套流程必须先跑完几十次试次才开始有回报。<strong>对愿意把机器人和实验台长时间占住的团队，这笔账划算；对只能借到半天机时的团队，它未必成立。</strong></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">八、它还没有证明什么</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第一，它没有提高模型本身的能力。</strong> 论文在结论里自己把这点列为限制：这类方法从物理轨迹里学到的可执行行为不更新机器人基础模型的参数，作者提出的下一步是把 harness 选出的轨迹用于在线模型更新。也就是说，这里的「持续学习」学的是代码、技能与记忆；模型只是被更聪明地调度了。这条线上的所有增益都受这个前提约束。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第二，真机的样本量不支持细排序。</strong> 五个任务、每任务 30 次试次，而且已经出现一项下降。拿这五个数字去给方法的稳健性排序，证据不够。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第三，对照数值的来源需要保守对待。</strong> 表 1、表 2 里那些 VLA 与 harness 的数字，论文没有逐项说明是自报还是作者复现。本文一律按「论文报告」处理，把它们之间的差距读成「这条路线值得跟进」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第四，「Physical Aha Moment」还不是机制。</strong> 论文引用这个概念（agent 找到让 VLA 回到分布内的关键物理状态变量），并用一个 LIBERO-Pro 的代表性案例展示：VOI 选择在 50 个物理 episode 内把八 episode 滚动成功率推到 100% 并保持，随机选择到第 100 个 episode 仍在波动、结束时约 75.0%（Fig. 7）。这是单一案例的曲线。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第五，成本权重是设计决策，不是常数。</strong> 四项成本怎么加权，直接决定系统在「多花时间做一次干净实验」与「将就着多试几次」之间怎么取舍。论文把权重写成可调参数，换硬件或换仿真器，策略行为会跟着变。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第六，两个 benchmark 的结果不能合并成一个结论。</strong> RoboCasa365 考的是家庭场景的任务组合泛化，LIBERO-Pro 考的是指令与位置扰动下的执行；两者的任务分布、判定与难度都不同。论文分开报，读的时候也应该分开读——把 77.0% 与 86.8% 平均成一个数字，只会得到一个既不描述仿真也不描述真机的数。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第七，收集与判定仍由作者设定。</strong> 真机五个任务的选择、成功与否的判定标准、以及 30 次试次的执行条件，都出自论文自己的设计。这在这类工作里是常态，它带来的限制也很具体：<strong>换一批任务，前四项的增益是否还在，论文没有回答。</strong></p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">九、青稞技术小结</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">如果只留三句话：</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第一，这篇论文把执行层适配的瓶颈换了个说法，而且换得对。</strong> 当改动本身不需要训练，约束就落在验证次数上；把「下一次试什么」显式建模，比继续增加可改的模块更接近真机上的实际困难。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第二，它最值钱的部分可能不是实验选择，而是「成本进入决策」这一条。</strong> 把耗时、仿真步数、GPU 与场景重置都算进实验成本，意味着这套系统的默认场景是<strong>在真实工作台旁边反复重摆的实验</strong>，而不是跑一次大评测。这比「多试几次就好了」要诚实得多。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>第三，它的结论需要读成「方向」而不是「幅度」。</strong> 论文给的是几组自报结果与一条学习曲线；真机上还有一项任务确实变差了。真正值得关注的信号是：不更新参数的前提下，harness 能不能把每一次试次的价值攒下来——而这篇论文至少把这个问题问清楚了。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">如果给这条线留一个观察点，我会盯这三件事：</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">一是<strong>同样的机制在别人的工作台上会怎样</strong>。VOI 排序、成本权重、匹配试次，这三样都需要有人用不同硬件、不同任务分布复现一遍，才能知道哪些部分是方法、哪些部分是这套实验台。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">二是<strong>它和「把试次用于更新模型」那条路的对照</strong>。作者自己提出了这个方向：把 harness 选出来的轨迹拿去在线更新基础模型。如果这条线走通，那么「改动放在代码里还是放在权重里」就变成了一个可以同时比较的取舍，而不是两个平行的路线。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">三是<strong>真机上的任务覆盖面</strong>。目前是五个任务、每任务 30 次试次，而且报告里已经出现了一项下降（眼镜桥式抓取）。这类工作最需要的下一步，恰好是它最贵的那一步：在更多任务上、用更多试次证明「多出来的每一次试次都还在变值」。</p>
-<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">附：与系列文章的关系</h2>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第 5 篇（RPent / Harness VLA）讨论的是<strong>执行由谁组织</strong>：把冻结的 VLA 降级成可重试的接触密集原语，由 planner 与记忆接管目标重绑定和失败重试。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第 6 篇（Agent as Policy）讨论的是<strong>谁拥有发出动作的权限</strong>：agent 在运行期写程序、直接给机械臂下发运动指令。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">本篇讨论的是<strong>有限的试次该花在哪里</strong>：改动仍然发生在执行层，但系统要先维护一组关于「改什么」的假设，再用信息价值与成本决定下一次拿哪个假设去试。三者不是替代关系——它们分别是执行层的「组织」「权限」与「预算」。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">还有一条更远的对照值得一提。第 015 篇里讨论过 π*0.6：它同样从部署经验里学，但学的方式是<strong>把经验变成优势估计，再更新策略权重</strong>。本篇学的是<strong>代码、技能与记忆</strong>，模型的权重从头到尾不动。这两条路线放在一起，正好构成一个还没被回答的问题：</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>同样一次真机试次，把它花在「改外面的代码」上，还是花在「改里面的参数」上？</strong></p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">从工程上看，前者可读、可回滚、不需要训练基础设施，缺点是它改不动模型本身的视觉运动能力；后者能改到能力本身，但每次更新都要付出训练与验证的成本，而且更新的结果不容易单点回滚。论文把「把 harness 选出的轨迹用于在线模型更新」写成未来工作，实际上是在承认：这两条路目前还没有被放在同一个预算下比过。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>它把执行层适配的瓶颈换了个说法，而且换得对。</strong> 当改动不再需要训练，约束就落在验证次数上；把「下一次试什么」显式建模，比继续增加可改的模块更贴近真机上的实际困难。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>最值钱的一条可能是「成本进入决策」。</strong> 把耗时、仿真步数、GPU 与场景重置都算进实验成本，等于承认这套系统的默认场景是在工作台旁边反复重摆。这个默认设定决定了它的方法形状，也决定了它换一个实验室未必等价。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>结论应该读成方向，不是幅度。</strong> 论文给的是几组自报结果与一条学习曲线，真机上还有一项下降。值得观察的信号是：不更新参数的前提下，harness 能否把每一次试次的价值攒下来。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">如果要给这条线留可验证的开放项，我会选三个：</p>
+<ol style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;"><li><strong>分配策略的净收益</strong>：固定模型、任务与预算，把 VOI 选实验换成随机探索，在同一批种子上比较学习 AUC——论文给了一版，需要第三方在不同硬件上复现。</li><li><strong>代码与技能的边界</strong>：在更多任务分布上测「只改代码 / 只改技能 / 一起改」的排序，确认 Atomic-Seen 与 Composite-Unseen 的反转在什么条件下出现。</li><li><strong>与「用试次更新权重」的对照</strong>：把 harness 选出的轨迹拿去在线更新基础模型，在同一个预算下比较两条路线，看试次花在代码上还是参数上更值。</li></ol>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这三项都不是「未来可期」式的许愿，它们各自有明确的设置与读数。第一项要的是同一批种子上的学习曲线；第二项要的是同一模型、同一预算下三个设置的成功率排序；第三项需要在同一平台上把两条路线的试次预算对齐。<strong>把「试次」当作统一货币之后，这三件事才有可能被放在同一张表里比较。</strong></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">从工程视角看，这篇论文最可迁移的部分不是它的具体数值，而是它把执行层适配的账算清楚了：改动免费，验证不免费；记忆能省钱，写记忆本身也要花钱；一套 harness 的性格由成本函数决定。一个团队要判断「要不要把工程投入到这类 harness 上」，先要回答的就是这三个问题在本平台上的答案。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">本系列此前讨论过两条同层路线：把冻结 VLA 降级成可重试原语（第 5 篇），以及让 agent 直接充当策略（第 6 篇）。加上这篇，执行层的三个问题各自有了一个代表：<strong>执行由谁组织、动作由谁发出、试次该花在哪里。</strong> 它们可以分别推进，也会互相借用实现——一个直接发动作的 agent 同样可以在预算约束下挑选实验。</p>
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">来源</h2>
 <ul style="font-size:16px;line-height:1.8;margin:0 0 18px;padding-left:24px;"><li>EmbodiedRSI（主来源）：<a href="https://arxiv.org/abs/2610.10498" target="_blank" rel="noopener">https://arxiv.org/abs/2610.10498</a></li><li>对照：Harness VLA（第 5 篇主题）：<a href="https://arxiv.org/abs/2607.08448" target="_blank" rel="noopener">https://arxiv.org/abs/2607.08448</a></li><li>对照：Agent as Policy（第 6 篇主题）：<a href="https://arxiv.org/abs/2609.12541" target="_blank" rel="noopener">https://arxiv.org/abs/2609.12541</a></li><li>评测平台：RoboCasa365 <a href="https://arxiv.org/abs/2603.04356" target="_blank" rel="noopener">https://arxiv.org/abs/2603.04356</a>、LIBERO-Pro <a href="https://arxiv.org/abs/2510.03827" target="_blank" rel="noopener">https://arxiv.org/abs/2510.03827</a></li></ul>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>图片出处</strong>：图 1 至图 4 均为青稞社区绘制，未复用原论文插图。</p>
-<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>归因说明</strong>：本文所有性能数字与训练设置均来自该论文，正文逐处写明「论文报告」；对照方法（其它 VLA 与 harness）的数值同样出自该论文的表 1、表 2，本刊未独立复现，也不把它们当作同一协议下的排序。判断部分以第一人称给出。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>图片出处</strong>：图 2 至图 5 复用该论文原图（arXiv:2610.10498v1 的 Fig. 2 / 3 / 4 / 5），来源已逐图标注；图 1 与封面为青稞社区绘制。本文数字与口径均以该论文 v1 为准。</p>
 </body>
 </html>
